@@ -1,0 +1,97 @@
+# -*- coding: utf-8 -*-
+"""
+📊 动态 SQL 编译模板（大模型两阶段路由提取模板）
+通过在 SQL 框架中设置占位符，支持在 Python 运行时将前端配置实时编译热部署进 View。
+"""
+
+# =========================================================================
+# 1. 阶段一：极速文件分类 DDL 模板
+# =========================================================================
+CLASSIFIER_SQL_TEMPLATE = """
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.v_stage1_classifier` AS
+SELECT
+  uri,
+  TRIM(ml_generate_text_llm_result) AS doc_type
+FROM
+  ML.GENERATE_TEXT(
+    MODEL `{model_id}`,
+    TABLE `{project_id}.{dataset_id}.t_object_table`,
+    STRUCT(
+      0.0 AS temperature,
+      16 AS max_output_tokens, -- 极小 Token，极速极便宜分类
+      TRUE AS flatten_json_output,
+      '请阅读文件，只输出以下类别单词之一：contract、resume、invoice、other。绝对不要带有任何多余字符！' AS prompt
+    )
+  );
+"""
+
+# =========================================================================
+# 2. 阶段二：动态路由与专属专家 DDL 模板 (支持用户 Live-Edit 自定义提示词与参数)
+# =========================================================================
+ROUTED_EXTRACTION_SQL_TEMPLATE = """
+CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.v_stage2_routed_extractor` AS
+WITH stage1_results AS (
+  SELECT uri, doc_type FROM `{project_id}.{dataset_id}.v_stage1_classifier`
+),
+prompt_routing AS (
+  SELECT
+    uri,
+    doc_type,
+    CASE doc_type
+      WHEN 'contract' THEN 
+        '''{prompt_contract}'''
+      WHEN 'resume' THEN
+        '''{prompt_resume}'''
+      WHEN 'invoice' THEN
+        '''{prompt_invoice}'''
+      ELSE
+        '''{prompt_other}'''
+    END AS prompt
+  FROM
+    stage1_results
+),
+stage2_raw_extracted AS (
+  SELECT
+    r.uri,
+    r.doc_type,
+    e.ml_generate_text_llm_result AS raw_text
+  FROM
+    prompt_routing r
+  LEFT JOIN 
+    ML.GENERATE_TEXT(
+      MODEL `{model_id}`,
+      (SELECT uri, prompt FROM prompt_routing), 
+      STRUCT(
+        {temperature} AS temperature,
+        {max_output_tokens} AS max_output_tokens,
+        TRUE AS flatten_json_output
+      )
+    ) e ON r.uri = e.uri
+),
+cleaned_results AS (
+  SELECT
+    uri,
+    doc_type,
+    REGEXP_REPLACE(
+      REGEXP_REPLACE(TRIM(raw_text), r'^```(?:json)?\\s*', ''), 
+      r'\\s*```$', 
+      ''
+    ) AS clean_json_str
+  FROM
+    stage2_raw_extracted
+)
+SELECT
+  uri,
+  doc_type,
+  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.doc_title') AS doc_title,
+  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.parties') AS parties,
+  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.key_dates') AS key_dates,
+  SAFE_CAST(JSON_VALUE(clean_json_str, '$.amount') AS FLOAT64) AS amount,
+  JSON_VALUE(clean_json_str, '$.currency') AS currency,
+  JSON_VALUE(clean_json_str, '$.summary') AS summary,
+  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.dynamic_attributes') AS dynamic_attributes,
+  COALESCE(JSON_VALUE(clean_json_str, '$.confidence_score'), 'high') AS confidence_score,
+  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.evidence') AS evidence
+FROM
+  cleaned_results;
+"""

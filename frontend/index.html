@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📂 无界 AI 智能网盘转换工具</title>
+    <!-- Google Fonts: Outfit & Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome 6 Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Main Style Sheet -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <div class="app-container">
+        <!-- =================================================================
+             左侧：AI 网盘侧边栏 (Sidebar Space Hub)
+             ================================================================= -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <i class="fa-solid fa-cloud-bolt logo-icon"></i>
+                <div class="logo-text">
+                    <h1>无界 AI 网盘</h1>
+                    <span class="logo-sub">BQCA Converter v1.0</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <h2>📁 智能分析空间</h2>
+                    <button class="icon-btn" id="btn-new-space" title="一键开通新分析空间">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>
+                <ul class="workspace-ul" id="workspace-list">
+                    <!-- 动态注入 Workspace 节点 -->
+                </ul>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="author-tag">
+                    <img src="https://api.dicebear.com/6.x/bottts/svg?seed=Laomai" alt="老麦" class="avatar">
+                    <div class="author-meta">
+                        <span class="author-name">老麦 (Arch老炮)</span>
+                        <span class="author-title">架构顾问</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- =================================================================
+             右侧：主工作流大屏 (Main Dashboard Grid)
+             ================================================================= -->
+        <main class="main-content">
+            <!-- 头部栏 -->
+            <header class="main-header">
+                <div class="header-title-area">
+                    <h2 id="current-space-title">正在载入默认空间...</h2>
+                    <p id="current-space-desc">请选择或新建一个智能分析空间以打通云端数仓和 BQCA 智脑。</p>
+                </div>
+                <div class="header-actions">
+                    <button class="sparkle-btn" id="btn-trigger-analyze" disabled>
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 一键大模型提取 & 绑定 BQCA
+                    </button>
+                </div>
+            </header>
+
+            <!-- 动态注入的大模型高级折叠配置面板会通过 app.js 渲染在此处 -->
+
+            <!-- 两栏布局 Grid -->
+            <div class="dashboard-grid">
+                <!-- 左栏：文件拖拽上传与源文件网盘列表 -->
+                <div class="glass-card upload-container">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-folder-open"></i> GCS 云端存储网盘</h3>
+                    </div>
+                    
+                    <!-- 拖拽上传区域 -->
+                    <div class="dropzone disabled" id="dropzone">
+                        <div class="dropzone-content">
+                            <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
+                            <p class="upload-text">拖拽 PDF, 图片, 发票或简历文件到此处直传</p>
+                            <span class="upload-sub">大平层签名安全 Signed URL 协议直传 (PUT)，极速、高并发且不占服务器带宽</span>
+                        </div>
+                    </div>
+
+                    <!-- 云端源文件列表 -->
+                    <div class="gcs-files-list">
+                        <h4>当前空间内的源文件列表：</h4>
+                        <ul class="file-ul" id="netdisk-file-list">
+                            <li class="empty-list-hint">空间内暂无上传文件</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 右栏：分析大屏与提取结果 -->
+                <div class="glass-card results-container">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-chart-line"></i> BQ 动态两阶段提取预览</h3>
+                    </div>
+
+                    <div class="table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th width="15%">分类</th>
+                                    <th width="30%">智能判定标题</th>
+                                    <th width="18%">核算金额</th>
+                                    <th width="18%">解析状态</th>
+                                    <th width="11%">置信度</th>
+                                    <th width="8%">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="analysis-table-body">
+                                <tr>
+                                    <td colspan="6" class="table-empty-hint">请上传文件并点击“一键大模型提取”按钮开始分析</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- =================================================================
+         双屏 HIL 人工审核与语义 DDL 建表持久化抽屉 (Split Sheet Overlay)
+         ================================================================= -->
+    <div class="sheet-overlay hidden" id="review-sheet">
+        <div class="sheet-panel">
+            <div class="sheet-header">
+                <h3><i class="fa-solid fa-user-shield"></i> 双屏人机协同（HIL）核对与语义建表归档</h3>
+                <button class="close-btn" id="sheet-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="sheet-content-split">
+                <!-- 左半屏：证据链原文追溯 (Evidence citations) -->
+                <div class="split-pane pane-evidence">
+                    <h4><i class="fa-solid fa-quote-left"></i> 大模型提取原文证据链 (Citations)</h4>
+                    <div id="evidence-container">
+                        <!-- 动态注入证据段落 -->
+                    </div>
+                </div>
+
+                <!-- 右半屏：人工微调纠错表单 (Form Verification) -->
+                <div class="split-pane pane-form">
+                    <h4><i class="fa-solid fa-pen-to-square"></i> 人工审核与微调字段</h4>
+                    
+                    <form class="hil-form" onsubmit="return false;">
+                        <input type="hidden" id="hil-uri">
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>文件类别 (Pill)</label>
+                                <input type="text" id="hil-doc-type" readonly style="background: rgba(255,255,255,0.05); color: var(--accent-pink);">
+                            </div>
+                            <div class="form-group">
+                                <label>人工核定标题</label>
+                                <input type="text" id="hil-title" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>核心提及对象/企业主体 (多主体用逗号隔开)</label>
+                            <input type="text" id="hil-parties" required>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>审计核算金额 (FLOAT64)</label>
+                                <input type="number" step="0.01" id="hil-amount">
+                            </div>
+                            <div class="form-group">
+                                <label>币种代号 (Currency)</label>
+                                <input type="text" id="hil-currency">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>合同/文件核心内容摘要 (100字内)</label>
+                            <textarea id="hil-summary" rows="3" required></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label>自适应特有属性 (Dynamic JSON Attributes)</label>
+                            <textarea id="hil-dynamics" rows="4" style="font-family: monospace; font-size:12px;" required></textarea>
+                        </div>
+
+                        <div class="form-actions" style="margin-top:24px;">
+                            <button class="sec-btn" type="button" id="btn-hil-cancel">取消</button>
+                            <button class="primary-btn sparkle-btn" type="button" id="btn-hil-submit">
+                                <i class="fa-solid fa-circle-check"></i> 确认无误，生成语义物理表并通过
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================================================================
+         新建空间一键初始化弹窗 (Modal popup)
+         ================================================================= -->
+    <div class="modal-overlay hidden" id="space-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-cloud-bolt"></i> 免配置一键开通 AI 智能分析空间</h3>
+                <button class="close-btn" id="modal-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>空间唯一 ID (GCS和BigQuery隔离主键，英文字母/下划线):</label>
+                    <input type="text" id="input-space-id" placeholder="例如: resume_screening_2026" required>
+                </div>
+                <div class="form-group" style="margin-top:16px;">
+                    <label>空间中文名称 (网页展示名称):</label>
+                    <input type="text" id="input-space-name" placeholder="例如: 2026届高级人才筛选网盘" required>
+                </div>
+                <div class="modal-tip">
+                    <i class="fa-solid fa-circle-info"></i> 后端 Python 会自动在云端开辟 <code>GCS 临时存储子目录</code>、建立独立隔离的 <code>BigQuery 数据集</code>，并一键完成 IAM 预授权，耗时仅约 2 秒。
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="sec-btn" id="btn-cancel">取消返回</button>
+                <button class="primary-btn" id="btn-confirm-create">一键全自动初始化</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================================================================
+         右下角：已激活 BQCA 智脑自然语言对话挂件 (Conversational BI Portal)
+         ================================================================= -->
+    <div class="bqca-widget-container hidden" id="bqca-widget">
+        <!-- 悬浮触发按钮 -->
+        <button class="bqca-toggle-bubble pulse-glow" id="bqca-toggle">
+            <i class="fa-solid fa-comments"></i> 问答智脑已激活
+        </button>
+
+        <!-- 聊天面板 -->
+        <div class="bqca-chat-box hidden" id="bqca-chat-box">
+            <div class="chat-header">
+                <div class="chat-title-meta">
+                    <i class="fa-solid fa-robot pulse-glow"></i>
+                    <div>
+                        <h4>BQCA 语义智脑问答</h4>
+                        <span>已关联已人工核实的物理表</span>
+                    </div>
+                </div>
+                <button class="icon-btn" id="chat-close-btn"><i class="fa-solid fa-chevron-down"></i></button>
+            </div>
+            
+            <div class="chat-body" id="bqca-messages">
+                <div class="msg msg-bot">
+                    <p>👋 您好！当前空间的人工审核物理表已成功部署并一键绑定到我。由于底层 Schema 列级塞入了极致精准的 DDL 注释，你可以随时向我提问，我绝对不会胡说八道！<br>
+                    尝试问我：<b>“把所有合同列一下”</b> 或者 <b>“查找有5年以上经验的开发”</b>。</p>
+                </div>
+            </div>
+
+            <div class="chat-footer">
+                <input type="text" id="bqca-input" placeholder="输入问题（人话），让 AI 生成 SQL 执行...">
+                <button class="primary-btn" id="btn-send-chat" style="padding: 10px 14px;"><i class="fa-solid fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CDN axios -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+    <!-- Frontend controller scripts -->
+    <script src="app.js"></script>
+</body>
+</html>

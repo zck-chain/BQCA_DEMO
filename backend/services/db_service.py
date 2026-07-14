@@ -15,7 +15,7 @@ class DatabaseService:
         return conn
 
     def init_database(self):
-        """初始化 SQLite 数据库及创建表格，支持种子数据预注入（Seed）"""
+        """初始化 SQLite 数据库及创建表格，支持种子数据预注入（Seed）和在线平滑升级"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -23,9 +23,30 @@ class DatabaseService:
                     category TEXT PRIMARY KEY,
                     display_name TEXT NOT NULL,
                     prompt_template TEXT NOT NULL,
+                    temperature REAL DEFAULT 0.1,
+                    max_output_tokens INTEGER DEFAULT 1024,
+                    top_p REAL DEFAULT 0.95,
+                    response_mime_type TEXT DEFAULT 'application/json',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # 动态迁移，检测并补充缺少的字段以平滑兼容老版本
+            cursor.execute("PRAGMA table_info(document_templates)")
+            columns = [info[1] for info in cursor.fetchall()]
+            
+            if "temperature" not in columns:
+                print("🔄 [SQLite-Migrate] 正在升级数据表，增加温度字段...")
+                cursor.execute("ALTER TABLE document_templates ADD COLUMN temperature REAL DEFAULT 0.1")
+            if "max_output_tokens" not in columns:
+                print("🔄 [SQLite-Migrate] 正在升级数据表，增加最大 Token 字段...")
+                cursor.execute("ALTER TABLE document_templates ADD COLUMN max_output_tokens INTEGER DEFAULT 1024")
+            if "top_p" not in columns:
+                print("🔄 [SQLite-Migrate] 正在升级数据表，增加 Top P 字段...")
+                cursor.execute("ALTER TABLE document_templates ADD COLUMN top_p REAL DEFAULT 0.95")
+            if "response_mime_type" not in columns:
+                print("🔄 [SQLite-Migrate] 正在升级数据表，增加 Response Format 字段...")
+                cursor.execute("ALTER TABLE document_templates ADD COLUMN response_mime_type TEXT DEFAULT 'application/json'")
             
             # 检测是否为空，若空则灌注 4 大核心内置模板种子数据
             cursor.execute("SELECT COUNT(*) FROM document_templates")
@@ -87,39 +108,56 @@ class DatabaseService:
 }"""
                 
                 seeds = [
-                    ("contract", "合同法务专家", default_contract),
-                    ("resume", "猎头与招聘总监", default_resume),
-                    ("invoice", "发票财务审核", default_invoice),
-                    ("other", "通用文档处理", default_other),
+                    ("contract", "合同法务专家", default_contract, 0.1, 1024, 0.95, "application/json"),
+                    ("resume", "猎头与招聘总监", default_resume, 0.4, 1024, 0.95, "application/json"),
+                    ("invoice", "发票财务审核", default_invoice, 0.1, 512, 0.95, "application/json"),
+                    ("other", "通用文档处理", default_other, 0.2, 1024, 0.95, "application/json"),
                 ]
                 
                 cursor.executemany("""
-                    INSERT INTO document_templates (category, display_name, prompt_template)
-                    VALUES (?, ?, ?)
+                    INSERT INTO document_templates (category, display_name, prompt_template, temperature, max_output_tokens, top_p, response_mime_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, seeds)
                 conn.commit()
                 print("🎉 [SQLite-Seed] 内置种子数据注入成功！")
+            else:
+                # 若已存在数据，但老版本没有初始化新字段值，则进行平稳值设置保护
+                cursor.execute("""
+                    UPDATE document_templates 
+                    SET temperature = 0.1, max_output_tokens = 512 
+                    WHERE category = 'invoice' AND (max_output_tokens IS NULL OR max_output_tokens = 1024)
+                """)
+                cursor.execute("""
+                    UPDATE document_templates 
+                    SET temperature = 0.4 
+                    WHERE category = 'resume' AND (temperature IS NULL OR temperature = 0.1)
+                """)
+                conn.commit()
 
     def list_templates(self):
         """列出所有已注册的分类模板"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT category, display_name, prompt_template FROM document_templates ORDER BY created_at ASC")
+            cursor.execute("SELECT category, display_name, prompt_template, temperature, max_output_tokens, top_p, response_mime_type FROM document_templates ORDER BY created_at ASC")
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def save_template(self, category: str, display_name: str, prompt_template: str):
-        """新增或更新模版提示词"""
+    def save_template(self, category: str, display_name: str, prompt_template: str, temperature: float = 0.1, max_output_tokens: int = 1024, top_p: float = 0.95, response_mime_type: str = "application/json"):
+        """新增或更新模版提示词与相关大模型调用参数"""
         category = category.lower().strip()
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO document_templates (category, display_name, prompt_template)
-                VALUES (?, ?, ?)
+                INSERT INTO document_templates (category, display_name, prompt_template, temperature, max_output_tokens, top_p, response_mime_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(category) DO UPDATE SET
                     display_name = excluded.display_name,
-                    prompt_template = excluded.prompt_template
-            """, (category, display_name.strip(), prompt_template.strip()))
+                    prompt_template = excluded.prompt_template,
+                    temperature = excluded.temperature,
+                    max_output_tokens = excluded.max_output_tokens,
+                    top_p = excluded.top_p,
+                    response_mime_type = excluded.response_mime_type
+            """, (category, display_name.strip(), prompt_template.strip(), float(temperature), int(max_output_tokens), float(top_p), response_mime_type.strip()))
             conn.commit()
         return True
 

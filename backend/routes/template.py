@@ -10,10 +10,14 @@ class TemplateSavePayload(BaseModel):
     category: str
     display_name: str
     prompt_template: str
+    temperature: Optional[float] = 0.1
+    max_output_tokens: Optional[int] = 1024
+    top_p: Optional[float] = 0.95
+    response_mime_type: Optional[str] = "application/json"
 
 @router.get("/list")
 async def get_templates():
-    """获取所有支持的文件分类和提示词模板"""
+    """获取所有支持的文件分类和提示词模板以及关联的大模型参数"""
     try:
         templates = db_service.list_templates()
         return {"success": True, "data": templates}
@@ -27,7 +31,11 @@ async def save_template(payload: TemplateSavePayload):
         db_service.save_template(
             category=payload.category,
             display_name=payload.display_name,
-            prompt_template=payload.prompt_template
+            prompt_template=payload.prompt_template,
+            temperature=payload.temperature if payload.temperature is not None else 0.1,
+            max_output_tokens=payload.max_output_tokens if payload.max_output_tokens is not None else 1024,
+            top_p=payload.top_p if payload.top_p is not None else 0.95,
+            response_mime_type=payload.response_mime_type if payload.response_mime_type is not None else "application/json"
         )
         return {"success": True, "message": f"模板 {payload.category} 保存成功！"}
     except Exception as e:

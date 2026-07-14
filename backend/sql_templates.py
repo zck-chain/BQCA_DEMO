@@ -26,40 +26,15 @@ FROM
 """
 
 # =========================================================================
-# 2. 阶段二：动态路由与专属专家 DDL 模板 (100% 动态编译 SQLite 内置与自定义模版)
+# 2. 阶段二：云端多流合并热编译 DDL 模板（支持每个分类单独配置温度与Token，按流按需调用，省钱提速）
 # =========================================================================
 ROUTED_EXTRACTION_SQL_TEMPLATE = """
 CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.v_stage2_routed_extractor` AS
 WITH stage1_results AS (
   SELECT uri, doc_type FROM `{project_id}.{dataset_id}.v_stage1_classifier`
 ),
-prompt_routing AS (
-  SELECT
-    uri,
-    doc_type,
-    CASE doc_type
-      {case_statements}
-    END AS prompt
-  FROM
-    stage1_results
-),
 stage2_raw_extracted AS (
-  SELECT
-    r.uri,
-    r.doc_type,
-    e.ml_generate_text_llm_result AS raw_text
-  FROM
-    prompt_routing r
-  LEFT JOIN 
-    ML.GENERATE_TEXT(
-      MODEL `{model_id}`,
-      (SELECT uri, prompt FROM prompt_routing), 
-      STRUCT(
-        {temperature} AS temperature,
-        {max_output_tokens} AS max_output_tokens,
-        TRUE AS flatten_json_output
-      )
-    ) e ON r.uri = e.uri
+  {union_clauses}
 ),
 cleaned_results AS (
   SELECT

@@ -97,23 +97,32 @@ class BigQueryService:
         return table_name
 
     def deploy_two_stage_extraction_views(self, workspace_id: str, temperature: float = 0.1, max_output_tokens: int = 1024,
-                                          prompt_contract: str = None, prompt_resume: str = None,
-                                          prompt_invoice: str = None, prompt_other: str = None):
+                                           prompt_contract: str = None, prompt_resume: str = None,
+                                           prompt_invoice: str = None, prompt_other: str = None):
         """
         3. 【动态热编译部署】一键将用户在 SQLite 数据库里自定义的分类和提示词热部署进 BigQuery View。
+           高级特性：云端多流合并热编译（UNION ALL 架构），实现每个分类独立控制大模型温度、Token 和采样系数。
         """
         from backend.services.db_service import db_service
         dataset_id = f"workspace_{workspace_id}"
         
-        # 3.1 对齐持久化：如果有来自前端的显式精调参数修改，同步更新至 SQLite 保证不丢失
-        if prompt_contract:
-            db_service.save_template("contract", "合同法务专家", prompt_contract)
-        if prompt_resume:
-            db_service.save_template("resume", "猎头与招聘总监", prompt_resume)
-        if prompt_invoice:
-            db_service.save_template("invoice", "发票财务审核", prompt_invoice)
-        if prompt_other:
-            db_service.save_template("other", "通用文档处理", prompt_other)
+        # 3.1 对齐持久化：如果有来自前端的旧版显式精调提示词修改，同步更新至 SQLite 并保护已有大模型参数
+        if any([prompt_contract, prompt_resume, prompt_invoice, prompt_other]):
+            current_db_templates = {t["category"]: t for t in db_service.list_templates()}
+            
+            def safe_save(cat, name, prompt):
+                if not prompt: return
+                existing = current_db_templates.get(cat)
+                temp = existing.get("temperature", 0.1) if existing else 0.1
+                toks = existing.get("max_output_tokens", 1024) if existing else 1024
+                tp = existing.get("top_p", 0.95) if existing else 0.95
+                mime = existing.get("response_mime_type", "application/json") if existing else "application/json"
+                db_service.save_template(cat, name, prompt, temp, toks, tp, mime)
+
+            safe_save("contract", "合同法务专家", prompt_contract)
+            safe_save("resume", "猎头与招聘总监", prompt_resume)
+            safe_save("invoice", "发票财务审核", prompt_invoice)
+            safe_save("other", "通用文档处理", prompt_other)
 
         # 3.2 从本地 SQLite 数据库中实时加载所有自定义分类模板
         templates = db_service.list_templates()
@@ -130,33 +139,79 @@ class BigQueryService:
         )
         self.client.query(stage1_ddl).result()
 
-        # 3.4 动态组装阶段二路由专家提取 CASE 分支
-        case_clauses = []
-        other_prompt_escaped = ""
+        # 3.4 动态组装阶段二云端多流合并 DDL （UNION ALL 架构，极致省钱与定制温度）
+        union_clauses = []
+        all_cats_quoted = []
+        
         for t in templates:
             cat = t["category"]
+            all_cats_quoted.append(f"'{cat}'")
             p_content = t["prompt_template"].replace("'", "''")
+            temp_val = t.get("temperature", 0.1)
+            tokens_val = t.get("max_output_tokens", 1024)
+            top_p_val = t.get("top_p", 0.95)
             
-            # 记录 other 模板以便作为默认 ELSE 分支
-            if cat == "other":
-                other_prompt_escaped = p_content
-                
-            case_clauses.append(f"WHEN '{cat}' THEN \n        '''{p_content}'''")
+            # 每个流只抽取匹配该分类的文件，并应用专属的超参配置
+            clause = f"""
+  SELECT
+    s.uri,
+    s.doc_type,
+    e.ml_generate_text_llm_result AS raw_text
+  FROM
+    stage1_results s
+  LEFT JOIN
+    ML.GENERATE_TEXT(
+      MODEL `{config.GEMINI_MODEL_ID}`,
+      (SELECT uri, '''{p_content}''' AS prompt FROM stage1_results WHERE doc_type = '{cat}'),
+      STRUCT(
+        {temp_val} AS temperature,
+        {tokens_val} AS max_output_tokens,
+        {top_p_val} AS top_p,
+        TRUE AS flatten_json_output
+      )
+    ) e ON s.uri = e.uri
+  WHERE
+    s.doc_type = '{cat}'
+"""
+            union_clauses.append(clause)
             
-        # 添加安全兜底的 ELSE 分支，避免出现分类遗漏时 DDL 视图解析崩溃
-        if other_prompt_escaped:
-            case_clauses.append(f"ELSE \n        '''{other_prompt_escaped}'''")
-            
-        case_statements = "\n      ".join(case_clauses)
+        # 3.5 组装安全兜底 Fallback 分支，针对任何分类失败或新增文件异常的防御性设计
+        cats_joined_str = ", ".join(all_cats_quoted)
+        default_other_template = next((t for t in templates if t["category"] == "other"), templates[-1])
+        other_prompt_escaped = default_other_template["prompt_template"].replace("'", "''")
+        other_temp_val = default_other_template.get("temperature", 0.2)
+        other_tokens_val = default_other_template.get("max_output_tokens", 1024)
+        other_top_p_val = default_other_template.get("top_p", 0.95)
+        
+        fallback_clause = f"""
+  SELECT
+    s.uri,
+    s.doc_type,
+    e.ml_generate_text_llm_result AS raw_text
+  FROM
+    stage1_results s
+  LEFT JOIN
+    ML.GENERATE_TEXT(
+      MODEL `{config.GEMINI_MODEL_ID}`,
+      (SELECT uri, '''{other_prompt_escaped}''' AS prompt FROM stage1_results WHERE doc_type NOT IN ({cats_joined_str}) OR doc_type IS NULL),
+      STRUCT(
+        {other_temp_val} AS temperature,
+        {other_tokens_val} AS max_output_tokens,
+        {other_top_p_val} AS top_p,
+        TRUE AS flatten_json_output
+      )
+    ) e ON s.uri = e.uri
+  WHERE
+    s.doc_type NOT IN ({cats_joined_str}) OR s.doc_type IS NULL
+"""
+        union_clauses.append(fallback_clause)
+        union_clauses_str = "\nUNION ALL\n".join(union_clauses)
 
-        # 3.5 动态编译两阶段提取 DDL 并执行
+        # 3.6 动态编译两阶段提取 DDL 并执行
         stage2_ddl = sql_templates.ROUTED_EXTRACTION_SQL_TEMPLATE.format(
             project_id=config.PROJECT_ID,
             dataset_id=dataset_id,
-            model_id=config.GEMINI_MODEL_ID,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            case_statements=case_statements
+            union_clauses=union_clauses_str
         )
         self.client.query(stage2_ddl).result()
         return f"{config.PROJECT_ID}.{dataset_id}.v_stage2_routed_extractor"

@@ -100,87 +100,63 @@ class BigQueryService:
                                           prompt_contract: str = None, prompt_resume: str = None,
                                           prompt_invoice: str = None, prompt_other: str = None):
         """
-        3. 【热编译部署】一键将用户的自定义参数编译部署进 BigQuery View。
+        3. 【动态热编译部署】一键将用户在 SQLite 数据库里自定义的分类和提示词热部署进 BigQuery View。
         """
+        from backend.services.db_service import db_service
         dataset_id = f"workspace_{workspace_id}"
         
-        # 3.1 动态编译并部署阶段一分类器
+        # 3.1 对齐持久化：如果有来自前端的显式精调参数修改，同步更新至 SQLite 保证不丢失
+        if prompt_contract:
+            db_service.save_template("contract", "合同法务专家", prompt_contract)
+        if prompt_resume:
+            db_service.save_template("resume", "猎头与招聘总监", prompt_resume)
+        if prompt_invoice:
+            db_service.save_template("invoice", "发票财务审核", prompt_invoice)
+        if prompt_other:
+            db_service.save_template("other", "通用文档处理", prompt_other)
+
+        # 3.2 从本地 SQLite 数据库中实时加载所有自定义分类模板
+        templates = db_service.list_templates()
+        categories = [t["category"] for t in templates]
+        categories_str = "、".join(categories)
+        
+        # 3.3 动态组装阶段一分类器提示词并执行热重构
+        prompt_classifier = f"请阅读文件，只输出以下类别单词之一：{categories_str}。绝对不要带有任何多余字符！"
         stage1_ddl = sql_templates.CLASSIFIER_SQL_TEMPLATE.format(
             project_id=config.PROJECT_ID,
             dataset_id=dataset_id,
-            model_id=config.GEMINI_MODEL_ID
+            model_id=config.GEMINI_MODEL_ID,
+            prompt_classifier=prompt_classifier
         )
         self.client.query(stage1_ddl).result()
 
-        # 3.2 准备提示词缺省值 (如果前端为空，则使用标准黄金预设，避免 DDL 崩溃)
-        default_contract = """你是一位极其严谨的资深采购与法务审计专家。请仔细审阅这份合同。你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
-        {
-          "doc_title": "合同主标题",
-          "parties": ["甲方公司名称", "乙方公司名称"],
-          "key_dates": {"签署日期": "YYYY-MM-DD", "截止日期": "YYYY-MM-DD"},
-          "amount": 100000.00,
-          "currency": "CNY",
-          "summary": "合同核心摘要",
-          "dynamic_attributes": {"delivery_deadline": "最晚交货期", "warranty_years": "质保期"},
-          "confidence_score": "high",
-          "evidence": {"parties": "依据段落", "amount": "依据段落"}
-        }"""
-        
-        default_resume = """你是一位资深猎头和 HR 总监。请评估这份简历，严格以标准的纯 JSON 格式输出，格式如下：
-        {
-          "doc_title": "姓名_求职简历",
-          "parties": ["姓名", "最近任职公司"],
-          "key_dates": {"最近入职时间": "YYYY-MM-DD"},
-          "amount": null,
-          "currency": "CNY",
-          "summary": "候选人评价",
-          "dynamic_attributes": {"job_title": "求职岗位", "skills": "核心技术栈"},
-          "confidence_score": "high",
-          "evidence": {"skills": "核心技能依据"}
-        }"""
-        
-        default_invoice = """你是一位资深出纳与税务专家。请核对这张发票，严格以标准的纯 JSON 格式输出，格式如下：
-        {
-          "doc_title": "发票_开票方",
-          "parties": ["销售方", "购买方"],
-          "key_dates": {"开票日期": "YYYY-MM-DD"},
-          "amount": 5000.00,
-          "currency": "CNY",
-          "summary": "服务摘要",
-          "dynamic_attributes": {"invoice_code": "发票号码", "tax_rate": "税率"},
-          "confidence_score": "high",
-          "evidence": {"amount": "发票金额依据"}
-        }"""
-        
-        default_other = """你是一个全能商业文档助理。请阅读文件并做最简总结，严格以标准的纯 JSON 格式输出，格式如下：
-        {
-          "doc_title": "文件主标题",
-          "parties": ["相关主体"],
-          "key_dates": {"关联日期": "YYYY-MM-DD"},
-          "amount": null,
-          "currency": "CNY",
-          "summary": "一句话核心内容摘要",
-          "dynamic_attributes": {"document_purpose": "该文件用途"},
-          "confidence_score": "high",
-          "evidence": {}
-        }"""
+        # 3.4 动态组装阶段二路由专家提取 CASE 分支
+        case_clauses = []
+        other_prompt_escaped = ""
+        for t in templates:
+            cat = t["category"]
+            p_content = t["prompt_template"].replace("'", "''")
+            
+            # 记录 other 模板以便作为默认 ELSE 分支
+            if cat == "other":
+                other_prompt_escaped = p_content
+                
+            case_clauses.append(f"WHEN '{cat}' THEN \n        '''{p_content}'''")
+            
+        # 添加安全兜底的 ELSE 分支，避免出现分类遗漏时 DDL 视图解析崩溃
+        if other_prompt_escaped:
+            case_clauses.append(f"ELSE \n        '''{other_prompt_escaped}'''")
+            
+        case_statements = "\n      ".join(case_clauses)
 
-        pc = (prompt_contract or default_contract).replace("'", "''")
-        pr = (prompt_resume or default_resume).replace("'", "''")
-        pi = (prompt_invoice or default_invoice).replace("'", "''")
-        po = (prompt_other or default_other).replace("'", "''")
-
-        # 3.3 动态编译两阶段提取 DDL 并执行
+        # 3.5 动态编译两阶段提取 DDL 并执行
         stage2_ddl = sql_templates.ROUTED_EXTRACTION_SQL_TEMPLATE.format(
             project_id=config.PROJECT_ID,
             dataset_id=dataset_id,
             model_id=config.GEMINI_MODEL_ID,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
-            prompt_contract=pc,
-            prompt_resume=pr,
-            prompt_invoice=pi,
-            prompt_other=po
+            case_statements=case_statements
         )
         self.client.query(stage2_ddl).result()
         return f"{config.PROJECT_ID}.{dataset_id}.v_stage2_routed_extractor"

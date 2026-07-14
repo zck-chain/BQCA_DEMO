@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 📊 动态 SQL 编译模板（大模型两阶段路由提取模板）
-通过在 SQL 框架中设置占位符，支持在 Python 运行时将前端配置实时编译热部署进 View。
+通过在 SQL 框架中设置占位符，支持在 Python 运行时将本地 SQLite 的模板配置实时编译热部署进 BigQuery View。
 """
 
 # =========================================================================
-# 1. 阶段一：极速文件分类 DDL 模板
+# 1. 阶段一：极速文件分类 DDL 模板 (支持根据 SQLite 注册分类动态编译)
 # =========================================================================
 CLASSIFIER_SQL_TEMPLATE = """
 CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.v_stage1_classifier` AS
@@ -20,13 +20,13 @@ FROM
       0.0 AS temperature,
       16 AS max_output_tokens, -- 极小 Token，极速极便宜分类
       TRUE AS flatten_json_output,
-      '请阅读文件，只输出以下类别单词之一：contract、resume、invoice、other。绝对不要带有任何多余字符！' AS prompt
+      '{prompt_classifier}' AS prompt
     )
   );
 """
 
 # =========================================================================
-# 2. 阶段二：动态路由与专属专家 DDL 模板 (支持用户 Live-Edit 自定义提示词与参数)
+# 2. 阶段二：动态路由与专属专家 DDL 模板 (100% 动态编译 SQLite 内置与自定义模版)
 # =========================================================================
 ROUTED_EXTRACTION_SQL_TEMPLATE = """
 CREATE OR REPLACE VIEW `{project_id}.{dataset_id}.v_stage2_routed_extractor` AS
@@ -38,14 +38,7 @@ prompt_routing AS (
     uri,
     doc_type,
     CASE doc_type
-      WHEN 'contract' THEN 
-        '''{prompt_contract}'''
-      WHEN 'resume' THEN
-        '''{prompt_resume}'''
-      WHEN 'invoice' THEN
-        '''{prompt_invoice}'''
-      ELSE
-        '''{prompt_other}'''
+      {case_statements}
     END AS prompt
   FROM
     stage1_results

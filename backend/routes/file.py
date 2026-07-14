@@ -6,7 +6,7 @@
   2. 获取某个特定空间已上传至 GCS 存储桶中的源文件列表。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from backend.services.gcs_service import GCSService
 
@@ -39,6 +39,19 @@ def get_upload_signed_url(payload: SignedUrlRequest):
         return {"success": True, "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成上传证书失败: {str(e)}")
+
+
+@router.post("/upload-fallback", summary="【自愈安全通道】当 GCP 无法签发 Signed URL 时，自动中转直传至 GCS")
+async def upload_file_fallback(workspace_id: str, file: UploadFile = File(...)):
+    """
+    自愈通道：当前端检测到环境没有签发凭证权限时（例如使用 ADC 用户登录时），
+    自动回退调用此接口，由本地 API 服务代为安全直传，保证 100% 顺畅。
+    """
+    try:
+        gcs_uri = await gcs_service.upload_file_direct(workspace_id, file)
+        return {"success": True, "gcs_uri": gcs_uri}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"本地 API 中转上传至 GCS 失败: {str(e)}")
 
 
 # -------------------------------------------------------------------------

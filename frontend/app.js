@@ -189,16 +189,159 @@ const bqcaMessages = document.getElementById("bqca-messages");
 // =========================================================================
 // 4. 初始化加载：空间与本地配置缓存 (LocalStorage Caching)
 // =========================================================================
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
     // 4.1 自动生成并插入大模型高级可折叠面板
     injectConfigPanelToHeader();
     
-    // 4.2 加载本地提示词与大模型配置缓存
+    // 4.2 动态从本地 SQLite 数据库加载分类模板，并进行 UI 渲染
+    await fetchTemplates();
     loadLocalConfigFromCache();
 
     // 4.3 初始化默认演示空间
     initializeDefaultWorkspace();
 });
+
+let loadedTemplates = [];
+
+async function fetchTemplates() {
+    try {
+        const res = await fetch(`${API_BASE}/api/templates/list`);
+        const result = await res.json();
+        if (result.success) {
+            loadedTemplates = result.data;
+            renderTemplatesUI();
+        }
+    } catch (e) {
+        console.error("无法加载大模型配置模板列表", e);
+    }
+}
+
+function renderTemplatesUI() {
+    const tabTriggers = document.getElementById("tab-triggers");
+    const tabContents = document.getElementById("tab-contents");
+    if (!tabTriggers || !tabContents) return;
+
+    tabTriggers.innerHTML = "";
+    tabContents.innerHTML = "";
+
+    // 渲染已有分类 Tab 按钮
+    loadedTemplates.forEach((t, idx) => {
+        const btn = document.createElement("button");
+        btn.className = `sec-btn ${idx === 0 ? "active" : ""}`;
+        btn.innerHTML = `<i class="fa-solid fa-brain" style="font-size: 10px; opacity: 0.8; margin-right: 4px;"></i> ${t.display_name}`;
+        btn.onclick = () => switchPromptTab(t.category);
+        btn.id = `tab-btn-${t.category}`;
+        tabTriggers.appendChild(btn);
+
+        // 渲染对应 Textarea 与操控层
+        const div = document.createElement("div");
+        div.id = `tab-content-${t.category}`;
+        div.className = idx === 0 ? "" : "hidden";
+        
+        const textarea = document.createElement("textarea");
+        textarea.id = `prompt-area-${t.category}`;
+        textarea.rows = 8;
+        textarea.style.width = "100%";
+        textarea.style.background = "rgba(0,0,0,0.2)";
+        textarea.style.border = "1px solid var(--border-color)";
+        textarea.style.color = "#fff";
+        textarea.style.fontFamily = "monospace";
+        textarea.style.fontSize = "12px";
+        textarea.style.padding = "12px";
+        textarea.style.borderRadius = "8px";
+        textarea.value = t.prompt_template;
+        
+        // 控制面板
+        const ctrlDiv = document.createElement("div");
+        ctrlDiv.style.display = "flex";
+        ctrlDiv.style.justifyContent = "space-between";
+        ctrlDiv.style.marginTop = "10px";
+        
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "sec-btn";
+        saveBtn.style.borderColor = "var(--primary-color)";
+        saveBtn.style.color = "var(--primary-color)";
+        saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
+        saveBtn.onclick = async () => {
+            saveBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在保存...`;
+            const success = await saveTemplateToBackend(t.category, t.display_name, textarea.value);
+            if (success) {
+                showToast("保存成功", `模版 <strong>${t.display_name}</strong> 的修改已成功持久化落库 SQLite！`, "success");
+                t.prompt_template = textarea.value;
+            } else {
+                showToast("保存失败", "保存模版至后台数据库失败！", "error");
+            }
+            saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
+        };
+        ctrlDiv.appendChild(saveBtn);
+        
+        // 允许删除非系统内置核心分类
+        if (!["contract", "resume", "invoice", "other"].includes(t.category)) {
+            const delBtn = document.createElement("button");
+            delBtn.className = "sec-btn";
+            delBtn.style.borderColor = "var(--accent-pink)";
+            delBtn.style.color = "var(--accent-pink)";
+            delBtn.innerHTML = `<i class="fa-solid fa-trash-can"></i> 删除此分类`;
+            delBtn.onclick = async () => {
+                if (confirm(`确定要物理删除 "${t.display_name}" 分类模板吗？这将从数仓逻辑中彻底移除该路由！`)) {
+                    const success = await deleteTemplateFromBackend(t.category);
+                    if (success) {
+                        showToast("删除分类成功", `分类模板 <strong>${t.display_name}</strong> 已安全移除。`, "success");
+                        await fetchTemplates();
+                    } else {
+                        showToast("删除分类失败", "删除分类模板失败！", "error");
+                    }
+                }
+            };
+            ctrlDiv.appendChild(delBtn);
+        }
+        
+        div.appendChild(textarea);
+        div.appendChild(ctrlDiv);
+        tabContents.appendChild(div);
+    });
+
+    // 渲染 "+ 新增分类" 按钮
+    const addBtn = document.createElement("button");
+    addBtn.className = "sec-btn";
+    addBtn.style.borderColor = "#64ffda";
+    addBtn.style.color = "#64ffda";
+    addBtn.innerHTML = `<i class="fa-solid fa-plus-circle"></i> 新增分类`;
+    addBtn.onclick = () => document.getElementById("template-modal").classList.remove("hidden");
+    tabTriggers.appendChild(addBtn);
+}
+
+async function saveTemplateToBackend(category, display_name, prompt_template) {
+    try {
+        const res = await fetch(`${API_BASE}/api/templates/save`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                category,
+                display_name,
+                prompt_template
+            })
+        });
+        const result = await res.json();
+        return result.success;
+    } catch (e) {
+        console.error(e);
+        return false;
+    }
+}
+
+async function deleteTemplateFromBackend(category) {
+    try {
+        const res = await fetch(`${API_BASE}/api/templates/${category}`, {
+            method: "DELETE"
+        });
+        const result = await res.json();
+        return result.success;
+    } catch (e) {
+        console.error(e);
+        return false;
+    }
+}
 
 function injectConfigPanelToHeader() {
     const header = document.querySelector(".main-header");
@@ -226,22 +369,13 @@ function injectConfigPanelToHeader() {
                 </div>
                 
                 <div class="prompt-tabs-container">
-                    <label style="font-size:12px; font-weight:600; color:var(--text-muted); display:block; margin-bottom:8px;">自适应提示词热插拔设计：</label>
-                    <div class="tab-triggers" style="display:flex; gap:10px; margin-bottom:12px;">
-                        <button class="sec-btn active" onclick="switchPromptTab('contract')">合同专家</button>
-                        <button class="sec-btn" onclick="switchPromptTab('resume')">简历猎头</button>
-                        <button class="sec-btn" onclick="switchPromptTab('invoice')">发票出纳</button>
-                        <button class="sec-btn" onclick="switchPromptTab('other')">通用助理</button>
+                    <label style="font-size:12px; font-weight:600; color:var(--text-muted); display:block; margin-bottom:8px;">自适应提示词热插拔及自定义分类模版：</label>
+                    <div class="tab-triggers" id="tab-triggers" style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                        <!-- 动态渲染 Tab 按钮 -->
                     </div>
-                    <div class="tab-contents">
-                        <textarea id="prompt-area-contract" rows="6" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:#fff; font-family:monospace; font-size:12px; padding:12px; border-radius:8px;"></textarea>
-                        <textarea id="prompt-area-resume" rows="6" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:#fff; font-family:monospace; font-size:12px; padding:12px; border-radius:8px;" class="hidden"></textarea>
-                        <textarea id="prompt-area-invoice" rows="6" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:#fff; font-family:monospace; font-size:12px; padding:12px; border-radius:8px;" class="hidden"></textarea>
-                        <textarea id="prompt-area-other" rows="6" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:#fff; font-family:monospace; font-size:12px; padding:12px; border-radius:8px;" class="hidden"></textarea>
+                    <div class="tab-contents" id="tab-contents">
+                        <!-- 动态渲染 Textarea 与保存按钮 -->
                     </div>
-                </div>
-                <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:16px;">
-                    <button class="sec-btn" id="btn-reset-presets" style="border-color:var(--accent-pink); color:var(--accent-pink);"><i class="fa-solid fa-rotate-left"></i> 一键恢复老麦黄金预设</button>
                 </div>
             </div>
         </div>
@@ -249,6 +383,37 @@ function injectConfigPanelToHeader() {
     
     // 插入到 header 下方
     header.insertAdjacentHTML("afterend", panelHtml);
+
+    // 注入自定义分类 Modal
+    const templateModalHtml = `
+        <div class="modal-overlay hidden" id="template-modal">
+            <div class="modal-card" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h3><i class="fa-solid fa-plus"></i> 新增自定义分类模板</h3>
+                    <button class="close-btn" id="template-modal-close"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>分类 Key (英文小写，唯一标识)</label>
+                        <input type="text" id="input-tpl-key" placeholder="例如: patent" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>分类名称 (中文名称)</label>
+                        <input type="text" id="input-tpl-name" placeholder="例如: 专利技术专家" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>专属结构化 JSON 提示词模版 (Prompt Template)</label>
+                        <textarea id="input-tpl-prompt" rows="6" placeholder="请在这里编写你的专属大模型 JSON 提取提示词，必须指定输出标准的纯 JSON 格式..." style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%; font-family:monospace; font-size:12px;"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px;">
+                    <button class="sec-btn" id="btn-cancel-tpl">取消</button>
+                    <button class="sparkle-btn" id="btn-save-tpl" style="padding:10px 20px;">确认添加并保存</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML("beforeend", templateModalHtml);
 
     // 绑定展开收起逻辑
     document.getElementById("config-panel-toggle").addEventListener("click", () => {
@@ -268,60 +433,75 @@ function injectConfigPanelToHeader() {
     });
 
     document.getElementById("input-tokens").addEventListener("change", saveConfigToLocalStorage);
-    document.querySelectorAll(".tab-contents textarea").forEach(tx => {
-        tx.addEventListener("input", saveConfigToLocalStorage);
-    });
 
-    // 绑定恢复预设逻辑
-    document.getElementById("btn-reset-presets").addEventListener("click", () => {
-        if (confirm("确定要恢复老麦的黄金模板吗？这将覆盖您当前所有修改。")) {
-            localStorage.removeItem("bqca_saas_presets");
-            loadLocalConfigFromCache();
+    // 绑定分类 Modal 事件
+    const templateModal = document.getElementById("template-modal");
+    document.getElementById("template-modal-close").onclick = () => templateModal.classList.add("hidden");
+    document.getElementById("btn-cancel-tpl").onclick = () => templateModal.classList.add("hidden");
+
+    document.getElementById("btn-save-tpl").onclick = async () => {
+        const key = document.getElementById("input-tpl-key").value.trim().toLowerCase();
+        const name = document.getElementById("input-tpl-name").value.trim();
+        const prompt = document.getElementById("input-tpl-prompt").value.trim();
+
+        if (!key || !name || !prompt) {
+            showToast("输入校验", "请完整填写分类 Key、名称和提示词！", "warning");
+            return;
         }
-    });
+        
+        if (!/^[a-z_]+$/.test(key)) {
+            showToast("Key 校验", "分类 Key 必须为纯英文小写（支持下划线），例如: patent", "warning");
+            return;
+        }
+
+        const success = await saveTemplateToBackend(key, name, prompt);
+        if (success) {
+            showToast("添加分类成功", `已成功将自定义分类 <strong>${name}</strong> 注册并持久化落库！`, "success");
+            templateModal.classList.add("hidden");
+            document.getElementById("input-tpl-key").value = "";
+            document.getElementById("input-tpl-name").value = "";
+            document.getElementById("input-tpl-prompt").value = "";
+            await fetchTemplates();
+        } else {
+            showToast("添加分类失败", "保存分类至后台数据库失败！", "error");
+        }
+    };
 }
 
 function loadLocalConfigFromCache() {
     let presets = localStorage.getItem("bqca_saas_presets");
     if (!presets) {
-        presets = JSON.stringify(DEFAULT_PRESETS);
+        presets = JSON.stringify({ temperature: 0.1, max_output_tokens: 1024 });
         localStorage.setItem("bqca_saas_presets", presets);
     }
     const pObj = JSON.parse(presets);
 
     // 设置输入框值
-    document.getElementById("input-temp").value = pObj.temperature;
-    document.getElementById("val-temp").textContent = pObj.temperature;
-    document.getElementById("input-tokens").value = pObj.max_output_tokens;
-    
-    document.getElementById("prompt-area-contract").value = pObj.prompt_contract;
-    document.getElementById("prompt-area-resume").value = pObj.prompt_resume;
-    document.getElementById("prompt-area-invoice").value = pObj.prompt_invoice;
-    document.getElementById("prompt-area-other").value = pObj.prompt_other;
+    document.getElementById("input-temp").value = pObj.temperature || 0.1;
+    document.getElementById("val-temp").textContent = pObj.temperature || 0.1;
+    document.getElementById("input-tokens").value = pObj.max_output_tokens || 1024;
 }
 
 function saveConfigToLocalStorage() {
     const configObj = {
         temperature: parseFloat(document.getElementById("input-temp").value),
-        max_output_tokens: parseInt(document.getElementById("input-tokens").value),
-        prompt_contract: document.getElementById("prompt-area-contract").value,
-        prompt_resume: document.getElementById("prompt-area-resume").value,
-        prompt_invoice: document.getElementById("prompt-area-invoice").value,
-        prompt_other: document.getElementById("prompt-area-other").value
+        max_output_tokens: parseInt(document.getElementById("input-tokens").value)
     };
     localStorage.setItem("bqca_saas_presets", JSON.stringify(configObj));
 }
 
 function switchPromptTab(tabName) {
-    const btns = document.querySelectorAll(".tab-triggers button");
-    const textareas = document.querySelectorAll(".tab-contents textarea");
+    const btns = document.querySelectorAll("#tab-triggers button");
+    const contents = document.querySelectorAll("#tab-contents > div");
     
     btns.forEach(btn => btn.classList.remove("active"));
-    textareas.forEach(tx => tx.classList.add("hidden"));
+    contents.forEach(div => div.classList.add("hidden"));
 
-    const indexMap = { contract: 0, resume: 1, invoice: 2, other: 3 };
-    btns[indexMap[tabName]].classList.add("active");
-    document.getElementById(`prompt-area-${tabName}`).classList.remove("hidden");
+    const targetBtn = document.getElementById(`tab-btn-${tabName}`);
+    const targetContent = document.getElementById(`tab-content-${tabName}`);
+    
+    if (targetBtn) targetBtn.classList.add("active");
+    if (targetContent) targetContent.classList.remove("hidden");
 }
 
 // -------------------------------------------------------------------------
@@ -528,7 +708,7 @@ function axiosPutWithProgress(url, file) {
 async function fetchFileList() {
     if (!currentWorkspace) return;
     try {
-        const res = await fetch(`${API_BASE}/api/files/list/${currentWorkspace}`);
+        const res = await fetch(`${API_BASE}/api/files/list/${currentWorkspace}?_t=${Date.now()}`);
         const result = await res.json();
         netdiskFileList.innerHTML = "";
 
@@ -536,13 +716,32 @@ async function fetchFileList() {
             result.data.forEach(f => {
                 const li = document.createElement("li");
                 li.className = "file-item";
+                li.style.display = "flex";
+                li.style.justifyContent = "space-between";
+                li.style.alignItems = "center";
+                li.style.padding = "12px 16px";
+                li.style.borderBottom = "1px solid var(--border-color)";
+                li.style.transition = "all 0.2s ease";
+
+                li.title = `【原始中文名】\n${f.filename}\n\n【云端物理名】\n${f.physical_name}`;
+                li.style.cursor = "pointer";
+
                 const sizeKB = (f.size_bytes / 1024).toFixed(1);
                 li.innerHTML = `
-                    <div class="file-meta">
-                        <i class="fa-regular fa-file-pdf"></i>
-                        <span>${f.filename}</span>
+                    <div class="file-meta" style="display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; align-items: flex-start; max-width: calc(100% - 70px);">
+                        <!-- 第一行：中文友好名称 -->
+                        <div style="display: flex; align-items: center; gap: 8px; width: 100%; overflow: hidden;">
+                            <i class="fa-regular fa-file-lines" style="color: var(--primary-color); font-size: 15px; flex-shrink: 0;"></i>
+                            <span style="font-weight: 600; color: #fff; font-size: 13px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; flex: 1;" title="${f.filename}">${f.filename}</span>
+                        </div>
+                        <!-- 第二行：GCS云端真实物理名称（100%可见，自动折行，绝不溢出） -->
+                        <div style="display: flex; align-items: flex-start; gap: 6px; font-size: 10.5px; color: var(--text-muted); font-family: monospace; padding-left: 24px; width: 100%; line-height: 1.4; overflow: hidden;">
+                            <i class="fa-solid fa-cloud" style="font-size: 9px; color: var(--accent-pink); flex-shrink: 0; margin-top: 3px;"></i>
+                            <span style="flex: 1; color: rgba(255, 255, 255, 0.45); cursor: text; white-space: normal !important; word-break: break-all !important; display: inline-block; max-width: 100%;" title="此文件在 GCS 桶中的实际物理名">物理名: ${f.physical_name}</span>
+                        </div>
                     </div>
-                    <span class="file-size">${sizeKB} KB</span>
+                    <!-- 右侧：文件大小（顶部对齐防止拉伸变形） -->
+                    <span class="file-size" style="font-size: 12px; color: var(--text-muted); font-weight: 500; min-width: 60px; text-align: right; flex-shrink: 0; align-self: flex-start; margin-top: 2px;">${sizeKB} KB</span>
                 `;
                 netdiskFileList.appendChild(li);
             });
@@ -564,8 +763,11 @@ btnTriggerAnalyze.onclick = async () => {
     btnTriggerAnalyze.disabled = true;
     isAnalyzing = true;
 
-    // 获取当前 localStorage 中的提示词参数
     const presets = JSON.parse(localStorage.getItem("bqca_saas_presets") || "{}");
+    const pContract = document.getElementById("prompt-area-contract")?.value || null;
+    const pResume = document.getElementById("prompt-area-resume")?.value || null;
+    const pInvoice = document.getElementById("prompt-area-invoice")?.value || null;
+    const pOther = document.getElementById("prompt-area-other")?.value || null;
 
     try {
         const res = await fetch(`${API_BASE}/api/workspace/analyze`, {
@@ -575,10 +777,10 @@ btnTriggerAnalyze.onclick = async () => {
                 workspace_id: currentWorkspace,
                 temperature: presets.temperature || 0.1,
                 max_output_tokens: presets.max_output_tokens || 1024,
-                prompt_contract: presets.prompt_contract,
-                prompt_resume: presets.prompt_resume,
-                prompt_invoice: presets.prompt_invoice,
-                prompt_other: presets.prompt_other
+                prompt_contract: pContract,
+                prompt_resume: pResume,
+                prompt_invoice: pInvoice,
+                prompt_other: pOther
             })
         });
         const result = await res.json();

@@ -6,7 +6,7 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routes import file, workspace
+from backend.routes import file, workspace, template
 
 app = FastAPI(
     title="无界 AI 智能网盘转换工具 —— API 引擎",
@@ -32,6 +32,7 @@ app.add_middleware(
 # -------------------------------------------------------------------------
 app.include_router(file.router)
 app.include_router(workspace.router)
+app.include_router(template.router, prefix="/api/templates")
 
 
 @app.on_event("startup")

@@ -20,7 +20,7 @@ class BQCABindingService:
            当用户在前端上传并刷新解析视图后，Python 自动执行 API 绑定逻辑。
            将指定的 BigQuery 视图（如 v_stage2_routed_extractor）或物理表注入 BQCA 会话知识库。
         """
-        target_uri = f"bq://{config.PROJECT_ID}.workspace_{workspace_id}.{table_or_view_name}"
+        target_uri = f"bq://{config.get_project_id()}.workspace_{workspace_id}.{table_or_view_name}"
         
         # 模拟 BQCA API 调用注册逻辑
         print(f"🤖 [BQCA API Calling] 正在将数仓对象 {target_uri} 注册注入 Agent Builder Data Store 知识库...")

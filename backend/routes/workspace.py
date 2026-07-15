@@ -71,6 +71,7 @@ def list_existing_workspaces():
 # -------------------------------------------------------------------------
 class TriggerAnalysisRequest(BaseModel):
     workspace_id: str
+    category: Optional[str] = "auto"
     temperature: Optional[float] = 0.1
     max_output_tokens: Optional[int] = 1024
     prompt_contract: Optional[str] = None
@@ -82,12 +83,16 @@ class TriggerAnalysisRequest(BaseModel):
 def run_asynchronous_pipeline(workspace_id: str, payload_dict: dict):
     """后台异步任务流：避免 HTTP 请求超时挂起"""
     try:
+        # 🚀 0. 在开启分析的第 1 微秒，将大模型结果缓存置为 running，瞬间阻断前台高频轮询引发的 BQ 重入雪崩
+        bq_service.trigger_async_cache_update(workspace_id)
+
         # 1. 强制刷新对象表元数据，加载前端最新 PUT 上传的文件
         bq_service.refresh_external_table_cache(workspace_id)
         
-        # 2. 【核心升级】传入前端精调参数，一键编译部署两阶段路由分析视图
+        # 2. 【核心升级】传入前端精调参数，一键自适应编译部署提取视图
         view_name = bq_service.deploy_two_stage_extraction_views(
             workspace_id=workspace_id,
+            selected_category=payload_dict.get("category", "auto"),
             temperature=payload_dict.get("temperature", 0.1),
             max_output_tokens=payload_dict.get("max_output_tokens", 1024),
             prompt_contract=payload_dict.get("prompt_contract"),
@@ -99,8 +104,17 @@ def run_asynchronous_pipeline(workspace_id: str, payload_dict: dict):
         # 3. 将新生成的分析视图一键关联到 BQCA 智能体
         bqca_service.auto_bind_view_to_bqca_datastore(workspace_id, "v_stage2_routed_extractor")
         
-        print(f"🎉 [Pipeline Done] 工作空间 {workspace_id} 两阶段热编译及 BQCA 关联全部成功！")
+        # 🚀 4. 在后台安安静静、只执行一次地拉取 BigQuery 物理视图，深度计算大模型并写入内存缓存！
+        bq_service.run_background_extraction_to_cache(workspace_id)
+        
+        print(f"🎉 [Pipeline Done] 工作空间 {workspace_id} 自适应热编译及 BQCA 关联全部成功！")
     except Exception as e:
+        # 如果中途报错，将缓存状态改为 error，防止卡死在 running 状态
+        bq_service._results_cache[workspace_id] = {
+            "status": "error",
+            "data": [],
+            "error_msg": str(e)
+        }
         print(f"❌ [Pipeline Error] 异常终止: {str(e)}")
 
 
@@ -142,8 +156,8 @@ class CorrectDocumentPayload(BaseModel):
     doc_type: str
     doc_title: str
     parties: List[str]
-    key_dates: Dict[str, str]
-    amount: Optional[float]
+    key_dates: Optional[Dict[str, str]] = {}
+    amount: Optional[float] = None
     currency: str
     summary: str
     dynamic_attributes: Dict[str, Any]

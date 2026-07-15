@@ -12,9 +12,15 @@ from backend import config
 
 
 class GCSService:
-    def __init__(self):
-        self.client = storage.Client(project=config.PROJECT_ID)
-        self.bucket_name = config.GLOBAL_STORAGE_BUCKET
+    @property
+    def client(self):
+        # 运行时动态获取当前生效的项目ID实例化，实现配置零重启热插拔
+        return storage.Client(project=config.get_project_id())
+
+    @property
+    def bucket_name(self):
+        # 运行时动态加载当前生效的存储桶名（如 zck_test），实现动态切换
+        return config.get_storage_bucket()
 
     def create_user_workspace_folder(self, workspace_id: str) -> str:
         """

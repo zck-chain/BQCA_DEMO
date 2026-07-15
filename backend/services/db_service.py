@@ -134,6 +134,30 @@ class DatabaseService:
                 """)
                 conn.commit()
 
+            # 💡 [SystemConfigs-Table] 创建系统核心配置参数表 (Key-Value)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_configs (
+                    config_key TEXT PRIMARY KEY,
+                    config_value TEXT NOT NULL
+                )
+            """)
+            
+            # 检测是否配置为空，若空则灌注 GCP 三要素默认种子
+            cursor.execute("SELECT COUNT(*) FROM system_configs")
+            config_count = cursor.fetchone()[0]
+            if config_count == 0:
+                print("🌱 [SQLite-Seed] 检测到配置表为空，正在注入默认 GCP 种子...")
+                configs = [
+                    ("gcp_project_id", "webeye-internal-test"),
+                    ("gcs_bucket_name", "bqca-demo"),
+                    ("bq_connection_name", "bqca_external_connection")
+                ]
+                cursor.executemany("""
+                    INSERT INTO system_configs (config_key, config_value)
+                    VALUES (?, ?)
+                """, configs)
+                conn.commit()
+
     def list_templates(self):
         """列出所有已注册的分类模板"""
         with self.get_connection() as conn:
@@ -170,6 +194,26 @@ class DatabaseService:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM document_templates WHERE category = ?", (category,))
+            conn.commit()
+        return True
+
+    def get_system_config(self, key: str, default: str = "") -> str:
+        """获取系统核心全局配置"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT config_value FROM system_configs WHERE config_key = ?", (key.strip(),))
+            row = cursor.fetchone()
+            return row["config_value"] if row else default
+
+    def set_system_config(self, key: str, value: str):
+        """设置系统核心全局配置"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO system_configs (config_key, config_value)
+                VALUES (?, ?)
+                ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value
+            """, (key.strip(), str(value).strip()))
             conn.commit()
         return True
 

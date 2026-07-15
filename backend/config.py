@@ -30,5 +30,28 @@ GLOBAL_STORAGE_BUCKET = os.getenv("GCS_BUCKET", "bqca-demo")
 # 精准打通并适配用户的多区域 'bqca_external_connection' 外部连接！
 GLOBAL_BQ_CONNECTION = f"projects/{PROJECT_ID}/locations/{LOCATION}/connections/bqca_external_connection"
 
+
+# -------------------------------------------------------------------------
+# 🚀 运行时动态配置加载 Helper (支持热插拔、热更新)
+# -------------------------------------------------------------------------
+def get_project_id() -> str:
+    from backend.services.db_service import db_service
+    return db_service.get_system_config("gcp_project_id", PROJECT_ID)
+
+def get_storage_bucket() -> str:
+    from backend.services.db_service import db_service
+    return db_service.get_system_config("gcs_bucket_name", GLOBAL_STORAGE_BUCKET)
+
+def get_connection_name() -> str:
+    from backend.services.db_service import db_service
+    return db_service.get_system_config("bq_connection_name", "bqca_external_connection")
+
+def get_bq_connection(location: str = None) -> str:
+    loc = (location or LOCATION).lower()
+    return f"projects/{get_project_id()}/locations/{loc}/connections/{get_connection_name()}"
+
+def get_gemini_model_id() -> str:
+    return f"{get_project_id()}.{SHARED_DATASET}.gemini_flash_model"
+
 # Reload trigger comment
 

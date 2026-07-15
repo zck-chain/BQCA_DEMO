@@ -40,26 +40,23 @@ cleaned_results AS (
   SELECT
     uri,
     doc_type,
-    REGEXP_REPLACE(
-      REGEXP_REPLACE(TRIM(raw_text), r'^```(?:json)?\\s*', ''), 
-      r'\\s*```$', 
-      ''
-    ) AS clean_json_str
+    -- 终极剥离核武器：精准抓取从第一个大括号到最后一个大括号 (或 中括号 到 中括号) 的干净 JSON 串，屏蔽大模型所有废话前缀与 markdown 标记
+    REGEXP_EXTRACT(TRIM(raw_text), r'(\\{{[\\s\\S]*\\}}|\\[[\\s\\S]*\\])') AS clean_json_str
   FROM
     stage2_raw_extracted
 )
 SELECT
   uri,
   doc_type,
-  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.doc_title') AS doc_title,
-  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.parties') AS parties,
-  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.key_dates') AS key_dates,
-  SAFE_CAST(JSON_VALUE(clean_json_str, '$.amount') AS FLOAT64) AS amount,
-  JSON_VALUE(clean_json_str, '$.currency') AS currency,
-  JSON_VALUE(clean_json_str, '$.summary') AS summary,
-  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.dynamic_attributes') AS dynamic_attributes,
-  COALESCE(JSON_VALUE(clean_json_str, '$.confidence_score'), 'high') AS confidence_score,
-  SAFE.PARSE_JSON(JSON_VALUE(clean_json_str), '$.evidence') AS evidence
+  COALESCE(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.doc_title'), REGEXP_EXTRACT(uri, r'([^/]+)$')) AS doc_title,
+  JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.parties') AS parties,
+  JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.key_dates') AS key_dates,
+  SAFE_CAST(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.amount') AS FLOAT64) AS amount,
+  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.currency') AS currency,
+  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.summary') AS summary,
+  clean_json_str AS dynamic_attributes,
+  COALESCE(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.confidence_score'), 'high') AS confidence_score,
+  JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.evidence') AS evidence
 FROM
   cleaned_results;
 """

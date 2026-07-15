@@ -1143,3 +1143,35 @@ button {
         width: 0%;
     }
 }
+
+/* =========================================================================
+   11. GCP 智能连接中控台呼吸灯与动效
+   ========================================================================= */
+.gcp-config-wrapper {
+    transition: var(--transition-smooth);
+}
+
+.gcp-config-wrapper:hover {
+    border-color: rgba(99, 102, 241, 0.2) !important;
+}
+
+#gcp-probe-status-pill {
+    transition: var(--transition-smooth);
+    letter-spacing: 0.5px;
+    font-weight: 500;
+}
+
+.gcp-verify-card {
+    animation: gcp-card-slide-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes gcp-card-slide-in {
+    from {
+        transform: translateY(-8px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}

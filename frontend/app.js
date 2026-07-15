@@ -202,6 +202,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 let loadedTemplates = [];
+let currentActiveCategory = "procurement_audit"; // 默认直接靶向高亮在最关心的采购法务专家上
 
 async function fetchTemplates() {
     try {
@@ -209,6 +210,13 @@ async function fetchTemplates() {
         const result = await res.json();
         if (result.success) {
             loadedTemplates = result.data;
+            if (loadedTemplates.length > 0) {
+                // 如果当前类别没有初始化，或者是不在当前加载的模板列表中，默认指向第一个具体专科
+                const exists = loadedTemplates.some(t => t.category === currentActiveCategory);
+                if (!exists) {
+                    currentActiveCategory = loadedTemplates[0].category;
+                }
+            }
             renderTemplatesUI();
         }
     } catch (e) {
@@ -224,19 +232,23 @@ function renderTemplatesUI() {
     tabTriggers.innerHTML = "";
     tabContents.innerHTML = "";
 
-    // 渲染已有分类 Tab 按钮
-    loadedTemplates.forEach((t, idx) => {
+    // 🚀 【极致洁癖纯净化】：完全遵照用户指令下线阶段一自动分类器卡片，100% 走纯靶向专家卡片提取
+    const allTemplates = [...loadedTemplates];
+
+    allTemplates.forEach((t, idx) => {
         const btn = document.createElement("button");
-        btn.className = `sec-btn ${idx === 0 ? "active" : ""}`;
+        // 判定当前选中的 Active Tab
+        const isSelected = t.category === currentActiveCategory;
+        btn.className = `sec-btn ${isSelected ? "active" : ""}`;
         btn.innerHTML = `<i class="fa-solid fa-brain" style="font-size: 10px; opacity: 0.8; margin-right: 4px;"></i> ${t.display_name}`;
         btn.onclick = () => switchPromptTab(t.category);
         btn.id = `tab-btn-${t.category}`;
         tabTriggers.appendChild(btn);
 
-        // 渲染对应 Textarea 与操控层
+        // 渲染对应模板面板内容容器
         const div = document.createElement("div");
         div.id = `tab-content-${t.category}`;
-        div.className = idx === 0 ? "" : "hidden";
+        div.className = isSelected ? "" : "hidden";
         
         const textarea = document.createElement("textarea");
         textarea.id = `prompt-area-${t.category}`;
@@ -250,53 +262,177 @@ function renderTemplatesUI() {
         textarea.style.padding = "12px";
         textarea.style.borderRadius = "8px";
         textarea.value = t.prompt_template;
+        if (t.category === "auto") {
+            textarea.readOnly = true;
+            textarea.style.opacity = "0.7";
+            textarea.style.borderStyle = "dashed";
+        }
+
+        // =========================================================================
+        // 🎛️ 模型高级超参数配置区 (MIME Type / Temperature / Top P / Max Tokens)
+        // =========================================================================
+        const hpDiv = document.createElement("div");
+        hpDiv.style.background = "rgba(255,255,255,0.02)";
+        hpDiv.style.border = "1px dashed var(--border-color)";
+        hpDiv.style.borderRadius = "8px";
+        hpDiv.style.padding = "12px";
+        hpDiv.style.marginTop = "12px";
+        hpDiv.style.marginBottom = "4px";
+        hpDiv.style.display = "grid";
+        hpDiv.style.gridTemplateColumns = "repeat(2, 1fr)";
+        hpDiv.style.gap = "16px";
+
+        if (t.category === "auto") {
+            // Auto 状态下显示高端分发提示，替代滑块超参
+            hpDiv.style.gridTemplateColumns = "1fr";
+            hpDiv.innerHTML = `
+                <div style="font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; line-height: 1.5; padding: 4px;">
+                    <i class="fa-solid fa-circle-info" style="color: var(--primary-color); font-size: 14px;"></i>
+                    <span>全自动分流模式下，后端引擎会根据 <strong>“合同法务”</strong>、<strong>“猎头简历”</strong>、<strong>“发票财务”</strong> 等各分类在 SQLite 里配置的个性化温度和提示词自动流转，在此无需设定单一超参。</span>
+                </div>
+            `;
+        } else {
+            // 1. Top-P (Slider)
+            const topPContainer = document.createElement("div");
+            topPContainer.style.display = "flex";
+            topPContainer.style.flexDirection = "column";
+            topPContainer.style.gap = "6px";
+
+            const topPLabelWrapper = document.createElement("div");
+            topPLabelWrapper.style.display = "flex";
+            topPLabelWrapper.style.justifyContent = "space-between";
+            topPLabelWrapper.style.fontSize = "11px";
+            topPLabelWrapper.style.color = "var(--text-muted)";
+            topPLabelWrapper.innerHTML = `<span><i class="fa-solid fa-wind" style="color: #74b9ff; margin-right: 3px;"></i> Top P (多样性)</span><span id="topp-val-${t.category}" style="color: #64ffda; font-family: monospace;">${t.top_p ?? 0.95}</span>`;
+
+            const topPSlider = document.createElement("input");
+            topPSlider.type = "range";
+            topPSlider.min = "0.0";
+            topPSlider.max = "1.0";
+            topPSlider.step = "0.05";
+            topPSlider.value = t.top_p ?? 0.95;
+            topPSlider.style.width = "100%";
+            topPSlider.style.cursor = "pointer";
+            topPSlider.style.accentColor = "var(--primary-color)";
+            topPSlider.oninput = (e) => {
+                document.getElementById(`topp-val-${t.category}`).innerText = parseFloat(e.target.value).toFixed(2);
+            };
+
+            topPContainer.appendChild(topPLabelWrapper);
+            topPContainer.appendChild(topPSlider);
+
+            // 2. Response MIME Type (Dropdown)
+            const mimeContainer = document.createElement("div");
+            mimeContainer.style.display = "flex";
+            mimeContainer.style.flexDirection = "column";
+            mimeContainer.style.gap = "6px";
+
+            const mimeLabel = document.createElement("div");
+            mimeLabel.style.fontSize = "11px";
+            mimeLabel.style.color = "var(--text-muted)";
+            mimeLabel.innerHTML = `<span><i class="fa-solid fa-file-code" style="color: #a29bfe; margin-right: 3px;"></i> Output Format (输出响应格式)</span>`;
+
+            const mimeSelect = document.createElement("select");
+            mimeSelect.style.background = "rgba(0,0,0,0.3)";
+            mimeSelect.style.border = "1px solid var(--border-color)";
+            mimeSelect.style.borderRadius = "4px";
+            mimeSelect.style.color = "#fff";
+            mimeSelect.style.fontSize = "11px";
+            mimeSelect.style.padding = "4px";
+            mimeSelect.style.outline = "none";
+            mimeSelect.style.cursor = "pointer";
+            mimeSelect.style.marginTop = "1px";
+
+            const mimeOptions = [
+                { value: "application/json", text: "JSON 结构化 (支持入库 BigQuery)" },
+                { value: "text/plain", text: "纯文本输出 (常规长文提取)" }
+            ];
+            mimeOptions.forEach(opt => {
+                const o = document.createElement("option");
+                o.value = opt.value;
+                o.text = opt.text;
+                if (opt.value === (t.response_mime_type ?? "application/json")) {
+                    o.selected = true;
+                }
+                mimeSelect.appendChild(o);
+            });
+
+            mimeContainer.appendChild(mimeLabel);
+            mimeContainer.appendChild(mimeSelect);
+
+            hpDiv.appendChild(topPContainer);
+            hpDiv.appendChild(mimeContainer);
+        }
         
         // 控制面板
         const ctrlDiv = document.createElement("div");
         ctrlDiv.style.display = "flex";
         ctrlDiv.style.justifyContent = "space-between";
-        ctrlDiv.style.marginTop = "10px";
+        ctrlDiv.style.marginTop = "12px";
         
-        const saveBtn = document.createElement("button");
-        saveBtn.className = "sec-btn";
-        saveBtn.style.borderColor = "var(--primary-color)";
-        saveBtn.style.color = "var(--primary-color)";
-        saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
-        saveBtn.onclick = async () => {
-            saveBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在保存...`;
-            const success = await saveTemplateToBackend(t.category, t.display_name, textarea.value);
-            if (success) {
-                showToast("保存成功", `模版 <strong>${t.display_name}</strong> 的修改已成功持久化落库 SQLite！`, "success");
-                t.prompt_template = textarea.value;
-            } else {
-                showToast("保存失败", "保存模版至后台数据库失败！", "error");
-            }
+        if (t.category !== "auto") {
+            const saveBtn = document.createElement("button");
+            saveBtn.className = "sec-btn";
+            saveBtn.style.borderColor = "var(--primary-color)";
+            saveBtn.style.color = "var(--primary-color)";
             saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
-        };
-        ctrlDiv.appendChild(saveBtn);
-        
-        // 允许删除非系统内置核心分类
-        if (!["contract", "resume", "invoice", "other"].includes(t.category)) {
-            const delBtn = document.createElement("button");
-            delBtn.className = "sec-btn";
-            delBtn.style.borderColor = "var(--accent-pink)";
-            delBtn.style.color = "var(--accent-pink)";
-            delBtn.innerHTML = `<i class="fa-solid fa-trash-can"></i> 删除此分类`;
-            delBtn.onclick = async () => {
-                if (confirm(`确定要物理删除 "${t.display_name}" 分类模板吗？这将从数仓逻辑中彻底移除该路由！`)) {
-                    const success = await deleteTemplateFromBackend(t.category);
-                    if (success) {
-                        showToast("删除分类成功", `分类模板 <strong>${t.display_name}</strong> 已安全移除。`, "success");
-                        await fetchTemplates();
-                    } else {
-                        showToast("删除分类失败", "删除分类模板失败！", "error");
-                    }
+            saveBtn.onclick = async () => {
+                saveBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在保存...`;
+                const topPSlider = hpDiv.querySelector("input[type=range]");
+                const mimeSelect = hpDiv.querySelector("select");
+                const toppVal = topPSlider ? parseFloat(topPSlider.value) : 0.95;
+                const mimeVal = mimeSelect ? mimeSelect.value : "application/json";
+                
+                const tempVal = t.temperature ?? 0.1;
+                const tokensVal = t.max_output_tokens ?? 1024;
+                
+                const success = await saveTemplateToBackend(
+                    t.category, 
+                    t.display_name, 
+                    textarea.value,
+                    tempVal,
+                    tokensVal,
+                    toppVal,
+                    mimeVal
+                );
+                if (success) {
+                    showToast("保存成功", `模版 <strong>${t.display_name}</strong> 的修改已持久化落库 SQLite！`, "success");
+                    t.prompt_template = textarea.value;
+                    t.temperature = tempVal;
+                    t.max_output_tokens = tokensVal;
+                    t.top_p = toppVal;
+                    t.response_mime_type = mimeVal;
+                } else {
+                    showToast("保存失败", "保存模版及模型超参至后台数据库失败！", "error");
                 }
+                saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
             };
-            ctrlDiv.appendChild(delBtn);
+            ctrlDiv.appendChild(saveBtn);
+            
+            // 允许删除非系统内置核心分类
+            if (!["contract", "resume", "invoice", "other"].includes(t.category)) {
+                const delBtn = document.createElement("button");
+                delBtn.className = "sec-btn";
+                delBtn.style.borderColor = "var(--accent-pink)";
+                delBtn.style.color = "var(--accent-pink)";
+                delBtn.innerHTML = `<i class="fa-solid fa-trash-can"></i> 删除此分类`;
+                delBtn.onclick = async () => {
+                    if (confirm(`确定要物理删除 "${t.display_name}" 分类模板吗？这将从数仓逻辑中彻底移除该路由！`)) {
+                        const success = await deleteTemplateFromBackend(t.category);
+                        if (success) {
+                            showToast("删除分类成功", `分类模板 <strong>${t.display_name}</strong> 已安全移除。`, "success");
+                            await fetchTemplates();
+                        } else {
+                            showToast("删除分类失败", "删除分类模板失败！", "error");
+                        }
+                    }
+                };
+                ctrlDiv.appendChild(delBtn);
+            }
         }
         
         div.appendChild(textarea);
+        div.appendChild(hpDiv);
         div.appendChild(ctrlDiv);
         tabContents.appendChild(div);
     });
@@ -311,7 +447,7 @@ function renderTemplatesUI() {
     tabTriggers.appendChild(addBtn);
 }
 
-async function saveTemplateToBackend(category, display_name, prompt_template) {
+async function saveTemplateToBackend(category, display_name, prompt_template, temperature = 0.1, max_output_tokens = 1024, top_p = 0.95, response_mime_type = "application/json") {
     try {
         const res = await fetch(`${API_BASE}/api/templates/save`, {
             method: "POST",
@@ -319,7 +455,11 @@ async function saveTemplateToBackend(category, display_name, prompt_template) {
             body: JSON.stringify({
                 category,
                 display_name,
-                prompt_template
+                prompt_template,
+                temperature,
+                max_output_tokens,
+                top_p,
+                response_mime_type
             })
         });
         const result = await res.json();
@@ -346,7 +486,10 @@ async function deleteTemplateFromBackend(category) {
 function injectConfigPanelToHeader() {
     const header = document.querySelector(".main-header");
     const panelHtml = `
-        <div class="collapsible-config-wrapper" style="width: 100%; margin-top: 16px; margin-bottom: 24px;">
+        <!-- =================================================================
+             模块A：大模型提取高级参数配置折叠面板
+             ================================================================= -->
+        <div class="collapsible-config-wrapper" style="width: 100%; margin-top: 16px; margin-bottom: 12px;">
             <div class="config-trigger" id="config-panel-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--primary-color); font-weight: 600;">
                 <i class="fa-solid fa-sliders"></i> ⚙️ 展开大模型提取高级参数配置（温度、最大Token与提示词热插拔）
                 <i class="fa-solid fa-chevron-down" id="config-chevron"></i>
@@ -376,6 +519,48 @@ function injectConfigPanelToHeader() {
                     <div class="tab-contents" id="tab-contents">
                         <!-- 动态渲染 Textarea 与保存按钮 -->
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- =================================================================
+             模块B：📡 GCP 云端存储与 BigQuery 物理连接设置中控台
+             ================================================================= -->
+        <div class="collapsible-config-wrapper gcp-config-wrapper" style="width: 100%; margin-top: 12px; margin-bottom: 24px;">
+            <div class="config-trigger" id="gcp-panel-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--primary-color); font-weight: 600;">
+                <i class="fa-solid fa-satellite-dish"></i> 📡 展开 GCP 云端存储与 BigQuery 物理连接设置（支持存储桶 zck_test 动态热切换）
+                <i class="fa-solid fa-chevron-down" id="gcp-chevron"></i>
+                <span id="gcp-probe-status-pill" style="font-size: 11px; margin-left: auto; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.05); color: var(--text-muted);">状态探测中...</span>
+            </div>
+            <div class="config-panel-body hidden" id="gcp-panel-body" style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; margin-top: 12px;">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom: 16px;">
+                    <i class="fa-solid fa-triangle-exclamation" style="color:var(--accent-pink); margin-right: 4px;"></i> <b>架构老炮保姆指南：</b> 智能网盘转换工具在云端大模型分析时，支持即时动态插拔、100% 区域对齐自愈、并自适应重构部署 BigQuery 外部表 DDL。配置保存后自动生效，无需重启后台！
+                </p>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
+                        <label style="font-size:12px; font-weight:600; color: var(--text-muted);">GCP 项目 ID (Project ID)</label>
+                        <input type="text" id="gcp-input-project" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: webeye-internal-test">
+                    </div>
+                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
+                        <label style="font-size:12px; font-weight:600; color: var(--text-muted);">GCS 智能网盘主存储桶 (Bucket Name)</label>
+                        <input type="text" id="gcp-input-bucket" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: bqca-demo">
+                    </div>
+                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
+                        <label style="font-size:12px; font-weight:600; color: var(--text-muted);">BQ 物理外部连接 (Connection Name)</label>
+                        <input type="text" id="gcp-input-connection" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: bqca_external_connection">
+                    </div>
+                </div>
+
+                <!-- 云端探针自检返回区 -->
+                <div class="gcp-verify-card hidden" id="gcp-verify-result-box" style="margin-bottom:16px; padding:16px; border-radius:8px; font-size:12px;">
+                    <!-- 这里会动态注入报错或成功的保姆指引 HTML -->
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:12px;">
+                    <button class="primary-btn sparkle-btn" id="gcp-btn-save-verify" style="padding:10px 20px;">
+                        <i class="fa-solid fa-circle-nodes"></i> 保存并一键云端物理自检
+                    </button>
                 </div>
             </div>
         </div>
@@ -415,7 +600,7 @@ function injectConfigPanelToHeader() {
     `;
     document.body.insertAdjacentHTML("beforeend", templateModalHtml);
 
-    // 绑定展开收起逻辑
+    // 绑定展开收起逻辑 (模块A)
     document.getElementById("config-panel-toggle").addEventListener("click", () => {
         const body = document.getElementById("config-panel-body");
         const chevron = document.getElementById("config-chevron");
@@ -423,6 +608,165 @@ function injectConfigPanelToHeader() {
         chevron.classList.toggle("fa-chevron-down");
         chevron.classList.toggle("fa-chevron-up");
     });
+
+    // 绑定展开收起逻辑 (模块B)
+    document.getElementById("gcp-panel-toggle").addEventListener("click", () => {
+        const body = document.getElementById("gcp-panel-body");
+        const chevron = document.getElementById("gcp-chevron");
+        body.classList.toggle("hidden");
+        chevron.classList.toggle("fa-chevron-down");
+        chevron.classList.toggle("fa-chevron-up");
+    });
+
+    // -------------------------------------------------------------------------
+    // 📡 GCP 连接配置控制台 运行时加载与交互绑定
+    // -------------------------------------------------------------------------
+    async function loadGCPConfig() {
+        try {
+            const res = await fetch(`${API_BASE}/api/config/`);
+            const result = await res.json();
+            if (result.success && result.data) {
+                document.getElementById("gcp-input-project").value = result.data.gcp_project_id || "";
+                document.getElementById("gcp-input-bucket").value = result.data.gcs_bucket_name || "";
+                document.getElementById("gcp-input-connection").value = result.data.bq_connection_name || "";
+                
+                // 状态灯更新
+                const pill = document.getElementById("gcp-probe-status-pill");
+                if (pill) {
+                    pill.textContent = `已绑定 [${result.data.gcs_bucket_name}]`;
+                    pill.style.background = "rgba(46, 204, 113, 0.15)";
+                    pill.style.color = "#2ecc71";
+                    pill.style.border = "1px solid rgba(46, 204, 113, 0.2)";
+                }
+            }
+        } catch (e) {
+            console.error("加载GCP中控参数异常", e);
+        }
+    }
+    loadGCPConfig();
+
+    // 绑定“保存并执行自检”
+    const btnGcpSaveVerify = document.getElementById("gcp-btn-save-verify");
+    if (btnGcpSaveVerify) {
+        btnGcpSaveVerify.addEventListener("click", async () => {
+            const projectId = document.getElementById("gcp-input-project").value.trim();
+            const bucketName = document.getElementById("gcp-input-bucket").value.trim();
+            const connectionName = document.getElementById("gcp-input-connection").value.trim();
+
+            if (!projectId || !bucketName || !connectionName) {
+                showToast("配置不可为空", "听哥劝，GCP三要素（项目ID、桶名、连接名）可不能留空！", "error");
+                return;
+            }
+
+            btnGcpSaveVerify.disabled = true;
+            btnGcpSaveVerify.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> 正在对齐区域并连通物理探针自检中...`;
+
+            const resultBox = document.getElementById("gcp-verify-result-box");
+            resultBox.classList.add("hidden");
+
+            try {
+                // 2.1：保存配置入库 SQLite
+                const saveRes = await fetch(`${API_BASE}/api/config/save`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        gcp_project_id: projectId,
+                        gcs_bucket_name: bucketName,
+                        bq_connection_name: connectionName
+                    })
+                });
+                const saveJson = await saveRes.json();
+                if (!saveJson.success) {
+                    showToast("保存配置失败", saveJson.message, "error");
+                    btnGcpSaveVerify.disabled = false;
+                    btnGcpSaveVerify.innerHTML = `<i class="fa-solid fa-circle-nodes"></i> 保存并一键云端物理自检`;
+                    return;
+                }
+
+                // 2.2：调用物理自检探针 API
+                const verifyRes = await fetch(`${API_BASE}/api/config/verify`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        gcp_project_id: projectId,
+                        gcs_bucket_name: bucketName,
+                        bq_connection_name: connectionName
+                    })
+                });
+                const verifyJson = await verifyRes.json();
+
+                resultBox.classList.remove("hidden");
+                const pill = document.getElementById("gcp-probe-status-pill");
+
+                if (verifyJson.success) {
+                    // 自检成功喜报
+                    resultBox.style.border = "1px solid #2ecc71";
+                    resultBox.style.background = "rgba(46, 204, 113, 0.05)";
+                    resultBox.innerHTML = `
+                        <div style="display:flex; align-items:center; gap:10px; color:#2ecc71; font-weight:700; margin-bottom:8px; font-size:13px;">
+                            <i class="fa-solid fa-circle-check" style="font-size:16px;"></i> 📡 云端物理链路 100% 自检闭环通关！
+                        </div>
+                        <p style="color:var(--text-muted); line-height:1.6; margin:0; font-size:12px;">
+                            🛰️ <b>区域自动对齐自愈成功：</b> 探测到您的云端主存储桶位于物理区域 <b style="color:#2ecc71;">${verifyJson.report.gcs_location}</b>，智提引擎已自动完成数仓数据集、外部表路径物理对齐。<br>
+                            🔑 <b>BigQuery Connection 服务账号 (Service Account)：</b><br>
+                            <code id="verify-sa-email" style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px; font-family:monospace; color:#fff; display:inline-block; margin-top:4px; font-size:11px;">${verifyJson.report.service_account}</code> 
+                            <button class="sec-btn" id="btn-copy-sa" style="padding:2px 8px; font-size:10px; margin-left:6px; cursor:pointer; vertical-align:middle;">[📋 一键复制]</button>
+                        </p>
+                    `;
+                    
+                    // 绑定服务账号一键复制
+                    document.getElementById("btn-copy-sa").onclick = () => {
+                        navigator.clipboard.writeText(verifyJson.report.service_account);
+                        showToast("复制成功", "服务账号已复制到剪切板，去 GCP 存储桶授权即可！", "success");
+                    };
+
+                    if (pill) {
+                        pill.textContent = `已连接 [${bucketName}]`;
+                        pill.style.background = "rgba(46, 204, 113, 0.15)";
+                        pill.style.color = "#2ecc71";
+                        pill.style.border = "1px solid rgba(46, 204, 113, 0.2)";
+                    }
+                    showToast("自检成功", "您的云端大平层连接已全物理闭环打通！", "success");
+                } else {
+                    // 自检失败排查
+                    resultBox.style.border = "1px solid var(--accent-pink)";
+                    resultBox.style.background = "rgba(231, 76, 60, 0.05)";
+                    
+                    const guideText = (verifyJson.report && verifyJson.report.guide) ? verifyJson.report.guide.replace(/\n/g, "<br>") : "未获取到引导指引。";
+                    const errMsg = (verifyJson.report && verifyJson.report.error_message) ? verifyJson.report.error_message : "未知网络或初始化错误。";
+                    const errorStep = (verifyJson.report && verifyJson.report.error_step) ? verifyJson.report.error_step : "INITIAL_CHECK";
+
+                    resultBox.innerHTML = `
+                        <div style="display:flex; align-items:center; gap:10px; color:#e74c3c; font-weight:700; margin-bottom:8px; font-size:13px;">
+                            <i class="fa-solid fa-circle-xmark" style="font-size:16px;"></i> ❌ 云端自检卡关 (诊断诊断: ${errorStep})
+                        </div>
+                        <p style="color:#fff; margin-bottom:8px; line-height:1.6; margin-top:0; font-size:12px;">
+                            <b>底层故障抛错：</b><span style="color:var(--accent-pink); font-family:monospace; background:rgba(0,0,0,0.2); padding:2px 6px; border-radius:4px; font-size:11px; display:inline-block; margin-top:4px;">${errMsg}</span>
+                        </p>
+                        <div style="background:rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.1); padding:12px; border-radius:6px; color:var(--text-muted); line-height:1.6; margin-top:8px; font-size:11px;">
+                            💡 <b>老麦架构诊断保姆指南：</b><br>
+                            ${guideText}
+                        </div>
+                    `;
+
+                    if (pill) {
+                        pill.textContent = "自检卡关";
+                        pill.style.background = "rgba(231, 76, 60, 0.15)";
+                        pill.style.color = "var(--accent-pink)";
+                        pill.style.border = "1px solid rgba(231, 76, 60, 0.2)";
+                    }
+                    showToast("云端连通故障", "未通过探针自检，请根据提示诊断排查配置！", "error");
+                }
+
+            } catch (e) {
+                console.error("一键验证接口联调异常", e);
+                showToast("连接验证失败", "无法连通后台自检接口，请检查后端运行状态！", "error");
+            } finally {
+                btnGcpSaveVerify.disabled = false;
+                btnGcpSaveVerify.innerHTML = `<i class="fa-solid fa-circle-nodes"></i> 保存并一键云端物理自检`;
+            }
+        });
+    }
 
     // 绑定滑块更新值显示
     const slider = document.getElementById("input-temp");
@@ -491,6 +835,7 @@ function saveConfigToLocalStorage() {
 }
 
 function switchPromptTab(tabName) {
+    currentActiveCategory = tabName; // 全局追踪当前活跃模板分类，实现完美的手自一体靶向分析
     const btns = document.querySelectorAll("#tab-triggers button");
     const contents = document.querySelectorAll("#tab-contents > div");
     
@@ -759,7 +1104,8 @@ async function fetchFileList() {
 btnTriggerAnalyze.onclick = async () => {
     if (!currentWorkspace) return;
 
-    btnTriggerAnalyze.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在进行两阶段路由提取中...`;
+    const modeText = currentActiveCategory === "auto" ? "智能分流" : "靶向直通";
+    btnTriggerAnalyze.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在进行 [${modeText}] 提取中...`;
     btnTriggerAnalyze.disabled = true;
     isAnalyzing = true;
 
@@ -775,6 +1121,7 @@ btnTriggerAnalyze.onclick = async () => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 workspace_id: currentWorkspace,
+                category: currentActiveCategory, // 将当前处于高亮选中查看的模板类别参数注入
                 temperature: presets.temperature || 0.1,
                 max_output_tokens: presets.max_output_tokens || 1024,
                 prompt_contract: pContract,
@@ -788,7 +1135,7 @@ btnTriggerAnalyze.onclick = async () => {
         if (result.success) {
             // 开始前端轮询
             pollAnalysisResults();
-            showToast("分析引擎已激活", "正在调用 Gemini-2.5-flash 进行路由与解析，请稍候...", "info", 3000);
+            showToast("分析引擎已激活", `已成功拉起 [${modeText}] 提取流水线，AI 正在分析，请稍候...`, "info", 4000);
         } else {
             showToast("触发分析失败", result.message, "error");
             btnTriggerAnalyze.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> 一键大模型提取 & 绑定 BQCA`;
@@ -801,7 +1148,7 @@ btnTriggerAnalyze.onclick = async () => {
         btnTriggerAnalyze.disabled = false;
         isAnalyzing = false;
     }
-};
+}
 
 function pollAnalysisResults() {
     let attempts = 0;
@@ -908,15 +1255,28 @@ window.openHumanReview = function(index) {
     document.getElementById("hil-summary").value = data.summary;
     document.getElementById("hil-dynamics").value = JSON.stringify(data.dynamic_attributes, null, 2);
 
-    // 2. 动态注入左侧证据链原文 (Evidence Quotes)
+    // 2. 动态注入左侧证据链原文 (Evidence Quotes) - 【智能自适应双保险解析器】
     evidenceContainer.innerHTML = "";
-    if (data.evidence && Object.keys(data.evidence).length > 0) {
-        for (let key in data.evidence) {
+    let evidenceObj = {};
+    if (data.evidence) {
+        if (typeof data.evidence === "string") {
+            try {
+                evidenceObj = JSON.parse(data.evidence);
+            } catch (e) {
+                evidenceObj = { "原文引用": data.evidence };
+            }
+        } else if (typeof data.evidence === "object") {
+            evidenceObj = data.evidence;
+        }
+    }
+
+    if (evidenceObj && Object.keys(evidenceObj).length > 0) {
+        for (let key in evidenceObj) {
             const block = document.createElement("div");
             block.className = "evidence-item";
             block.innerHTML = `
                 <div class="evidence-field"><i class="fa-solid fa-quote-left"></i> ${key} 提取依据</div>
-                <div class="evidence-quote">“${data.evidence[key]}”</div>
+                <div class="evidence-quote">“${evidenceObj[key]}”</div>
             `;
             evidenceContainer.appendChild(block);
         }

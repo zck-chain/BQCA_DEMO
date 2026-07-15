@@ -50,6 +50,10 @@ def get_bq_connection(location: str = None) -> str:
     loc = (location or LOCATION).lower()
     return f"projects/{get_project_id()}/locations/{loc}/connections/{get_connection_name()}"
 
+def get_bqca_agent_id() -> str:
+    from backend.services.db_service import db_service
+    return db_service.get_system_config("bqca_agent_id", "")
+
 def get_gemini_model_id() -> str:
     return f"{get_project_id()}.{SHARED_DATASET}.gemini_flash_model"
 

@@ -166,6 +166,18 @@ class DatabaseService:
                 )
             """)
             
+            # 💡 [PendingExtractionResults-Table] 新增大模型 Pending 数据 SQLite 本地持久化缓存表，彻底降本增效！
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pending_extraction_results (
+                    workspace_id TEXT,
+                    uri TEXT,
+                    doc_type TEXT,
+                    raw_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (workspace_id, uri)
+                )
+            """)
+            
             # 检测是否配置为空，若空则灌注 GCP 三要素默认种子
             cursor.execute("SELECT COUNT(*) FROM system_configs")
             config_count = cursor.fetchone()[0]
@@ -239,6 +251,66 @@ class DatabaseService:
                 ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value
             """, (key.strip(), str(value).strip()))
             conn.commit()
+        return True
+
+    # =========================================================================
+    # 💡 [SaaS Pending Cache CRUD] 新增大模型 Pending 结果 SQLite 持久化层
+    # =========================================================================
+    def save_pending_results(self, workspace_id: str, results_list: list):
+        """批量持久化保存大模型跑出来的 Pending 增量结果"""
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            for row in results_list:
+                row_map = dict(row) if not isinstance(row, dict) else row
+                uri = row_map.get("uri")
+                doc_type = row_map.get("doc_type") or "other"
+                if not uri:
+                    continue
+                # 将整行原汁原味序列化为 JSON 字符串保存
+                raw_json = json.dumps(row_map, ensure_ascii=False)
+                cursor.execute("""
+                    INSERT INTO pending_extraction_results (workspace_id, uri, doc_type, raw_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(workspace_id, uri) DO UPDATE SET
+                        doc_type = excluded.doc_type,
+                        raw_json = excluded.raw_json,
+                        created_at = CURRENT_TIMESTAMP
+                """, (workspace_id.strip(), uri.strip(), doc_type, raw_json))
+            conn.commit()
+        print(f"📦 [SQLite-Cache] 成功对 {len(results_list)} 条大模型 Pending 结果执行 SQLite 物理持久化备份！")
+        return True
+
+    def get_pending_results(self, workspace_id: str) -> list:
+        """从 SQLite 中秒级获取当前隔离空间下所有缓存的 Pending 数据"""
+        import json
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT raw_json FROM pending_extraction_results 
+                WHERE workspace_id = ? 
+                ORDER BY created_at ASC
+            """, (workspace_id.strip(),))
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                try:
+                    row_dict = json.loads(r["raw_json"])
+                    results.append(row_dict)
+                except Exception as e:
+                    print(f"⚠️ [SQLite-Cache] 反序列化缓存异常: {str(e)}")
+            return results
+
+    def delete_pending_result_by_uri(self, workspace_id: str, uri: str):
+        """物理清除某条已经被人工核对保存并落盘（Approved）的文件 Pending 缓存"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM pending_extraction_results 
+                WHERE workspace_id = ? AND uri = ?
+            """, (workspace_id.strip(), uri.strip()))
+            conn.commit()
+        print(f"🧹 [SQLite-Cache] 文件 {uri} 成功核对通过，已物理剔除 SQLite 临时 Pending 缓存！")
         return True
 
 # 实例化全局单例

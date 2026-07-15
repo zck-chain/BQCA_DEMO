@@ -168,6 +168,7 @@ class CorrectDocumentPayload(BaseModel):
     currency: str
     summary: str
     dynamic_attributes: Dict[str, Any]
+    evidence: Optional[Dict[str, Any]] = {}
 
 
 class HumanCorrectRequest(BaseModel):

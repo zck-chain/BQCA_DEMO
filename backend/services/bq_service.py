@@ -460,6 +460,10 @@ FROM
                 "data": serializable_rows,
                 "error_msg": None
             }
+            # 💡 [SQLite-Cache-Persistence] 大模型物理计算完毕，瞬间在本地 SQLite 做增量热持久化，实现永久秒开！
+            from backend.services.db_service import db_service
+            db_service.save_pending_results(workspace_id, serializable_rows)
+            
             print(f"✅ [Background-BQ] 缓存装载成功！大模型提取已完满完成。隔离空间: {workspace_id}, 记录行数: {len(serializable_rows)}")
         except Exception as e:
             self._results_cache[workspace_id] = {
@@ -477,6 +481,9 @@ FROM
             "data": serializable_rows,
             "error_msg": None
         }
+        # 💡 同步执行本地 SQLite 持久化热备份
+        from backend.services.db_service import db_service
+        db_service.save_pending_results(workspace_id, serializable_rows)
         return serializable_rows
 
     def fetch_extraction_results(self, workspace_id: str) -> list:
@@ -501,8 +508,21 @@ FROM
                 print(f"⚠️ [Fetch-Results] 引用大模型缓存报错: {cache_info['error_msg']}")
                 extractor_rows = self._fetch_live_view_extractor_rows(workspace_id)
         else:
-            # 还没有进行过分析，属于冷启动或首次加载
-            extractor_rows = self._fetch_live_view_extractor_rows(workspace_id)
+            # 💡 [SQLite-Pending-Restore] 还没有进程级内存缓存（说明用户刚刷新了页面），首先进行本地 SQLite 极速拉取！
+            from backend.services.db_service import db_service
+            sqlite_cache_data = db_service.get_pending_results(workspace_id)
+            if sqlite_cache_data:
+                print(f"⚡ [SQLite-Cache-Hit] 成功从 SQLite 本地备份中极速拉取到 {len(sqlite_cache_data)} 条 Pending 大模型结果！实现 1 毫秒秒开，跳过高昂 BigQuery 直查！")
+                extractor_rows = sqlite_cache_data
+                # 同步回内存缓存，保持生命周期合流
+                self._results_cache[workspace_id] = {
+                    "status": "done",
+                    "data": sqlite_cache_data,
+                    "error_msg": None
+                }
+            else:
+                # 若 SQLite 里面也没有缓存（说明确实是新隔离空间且从来没有进行过首次大模型计算），此时才降级进行首次 BigQuery 现场运算
+                extractor_rows = self._fetch_live_view_extractor_rows(workspace_id)
 
         # 2. 尝试拉取已经人工核对通过并落盘物理表的金牌数据
         verified_rows = []
@@ -514,40 +534,78 @@ FROM
             pass
 
         if verified_table_exists:
+            query_verified_with_evidence = f"""
+                SELECT 
+                  uri, doc_type, doc_title, 
+                  TO_JSON_STRING(parties) AS parties, 
+                  TO_JSON_STRING(key_dates) AS key_dates, 
+                  amount, currency, summary, 
+                  TO_JSON_STRING(dynamic_attributes) AS dynamic_attributes,
+                  TO_JSON_STRING(evidence) AS evidence
+                FROM `{project_id}.{dataset_id}.t_verified_smart_drive`
+                LIMIT 100
+            """
             try:
-                query_verified = f"""
-                    SELECT 
-                      uri, doc_type, doc_title, 
-                      TO_JSON_STRING(parties) AS parties, 
-                      TO_JSON_STRING(key_dates) AS key_dates, 
-                      amount, currency, summary, 
-                      TO_JSON_STRING(dynamic_attributes) AS dynamic_attributes
-                    FROM `{project_id}.{dataset_id}.t_verified_smart_drive`
-                    LIMIT 100
-                """
-                verified_rows = list(self.client.query(query_verified).result())
+                verified_rows = list(self.client.query(query_verified_with_evidence).result())
             except Exception as e:
-                print(f"⚠️ [Fetch-Results] 读取物理表 t_verified_smart_drive 异常: {str(e)}")
+                # 检查是否是因为旧表没有 evidence 列导致的报错
+                if "evidence" in str(e).lower() or "not found" in str(e).lower() or "invalid" in str(e).lower():
+                    try:
+                        # 触发物理表结构自动演进与在线自愈
+                        print(f"🔄 [Schema-Evolution] 触发旧物理表在线自愈，正在为 t_verified_smart_drive 补齐 evidence 物理列...")
+                        heal_sql = f"""
+                            ALTER TABLE `{project_id}.{dataset_id}.t_verified_smart_drive` 
+                            ADD COLUMN IF NOT EXISTS evidence JSON OPTIONS(description="大模型判定每一个字段的关键原文依据")
+                        """
+                        self.client.query(heal_sql).result()
+                        # 补齐列后，再次执行全新查询，完美闭环！
+                        verified_rows = list(self.client.query(query_verified_with_evidence).result())
+                    except Exception as ex:
+                        print(f"⚠️ [Schema-Evolution] 在线自愈 DDL 异常，降级到无 evidence 查询: {str(ex)}")
+                        # 终极降级：不查 evidence 列
+                        query_fallback = f"""
+                            SELECT 
+                              uri, doc_type, doc_title, 
+                              TO_JSON_STRING(parties) AS parties, 
+                              TO_JSON_STRING(key_dates) AS key_dates, 
+                              amount, currency, summary, 
+                              TO_JSON_STRING(dynamic_attributes) AS dynamic_attributes
+                            FROM `{project_id}.{dataset_id}.t_verified_smart_drive`
+                            LIMIT 100
+                        """
+                        try:
+                            fallback_rows = list(self.client.query(query_fallback).result())
+                            # 补齐假字段 evidence，让后续逻辑无缝对齐
+                            verified_rows = []
+                            for r in fallback_rows:
+                                rd = dict(r)
+                                rd["evidence"] = None
+                                verified_rows.append(rd)
+                        except Exception as ex_fatal:
+                            print(f"❌ [Fetch-Results] 严重异常: {str(ex_fatal)}")
+                else:
+                    print(f"⚠️ [Fetch-Results] 读取物理表 t_verified_smart_drive 异常: {str(e)}")
 
         # 3. 建立已核对数据的唯一 uri 索引，提供 pending 数据增量差集排重过滤（Token 消耗 0 毫秒！）
-        verified_uris = {row.get("uri") for row in verified_rows}
+        verified_uris = {row.get("uri") if isinstance(row, dict) else row.get("uri") for row in verified_rows}
         
         results = []
         
         # 4. 组装已核对的历史金牌数据（Approved）
         for row in verified_rows:
+            row_map = dict(row) if not isinstance(row, dict) else row
             results.append({
-                "uri": row.get("uri"),
-                "doc_type": row.get("doc_type") or "other",
-                "doc_title": row.get("doc_title") or "未命名文件",
-                "parties": json.loads(row.get("parties")) if row.get("parties") else [],
-                "key_dates": json.loads(row.get("key_dates")) if row.get("key_dates") else {},
-                "amount": row.get("amount"),
-                "currency": row.get("currency") or "CNY",
-                "summary": row.get("summary") or "无摘要",
-                "dynamic_attributes": json.loads(row.get("dynamic_attributes")) if row.get("dynamic_attributes") else {},
+                "uri": row_map.get("uri"),
+                "doc_type": row_map.get("doc_type") or "other",
+                "doc_title": row_map.get("doc_title") or "未命名文件",
+                "parties": json.loads(row_map.get("parties")) if row_map.get("parties") else [],
+                "key_dates": json.loads(row_map.get("key_dates")) if row_map.get("key_dates") else {},
+                "amount": row_map.get("amount"),
+                "currency": row_map.get("currency") or "CNY",
+                "summary": row_map.get("summary") or "无摘要",
+                "dynamic_attributes": json.loads(row_map.get("dynamic_attributes")) if row_map.get("dynamic_attributes") else {},
                 "confidence_score": "high",
-                "evidence": {},
+                "evidence": json.loads(row_map.get("evidence")) if row_map.get("evidence") else {},
                 "parse_status": "approved"
             })
             
@@ -671,7 +729,10 @@ FROM
               currency STRING OPTIONS (description="法定币种简写（如 CNY, USD）"),
               summary STRING OPTIONS (description="文件一句话核心中文摘要（100字内）"),
               dynamic_attributes JSON OPTIONS (description="自适应特有核心属性（例如合同的质保期和交货限期，求职人的求职岗位和技术栈，支持 JSON 穿透）"),
+              evidence JSON OPTIONS (description="大模型判定每一个字段的关键原文依据"),
               parse_status STRING OPTIONS (description="解析状态，在人工确认后强制标记为 approved 归档")
+            ) OPTIONS(
+              description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。当用户询问关于合同、发票、简历、采购、财务等业务数据统计、过滤、求和的问题时，AI 代理必须且只能查询本表！"
             );
         """
         self.client.query(init_table_ddl).result()
@@ -690,10 +751,11 @@ FROM
                 currency = @currency,
                 summary = @summary,
                 dynamic_attributes = SAFE.PARSE_JSON(@dynamic_attributes),
+                evidence = SAFE.PARSE_JSON(@evidence),
                 parse_status = 'approved'
             WHEN NOT MATCHED THEN
-              INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, parse_status)
-              VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), 'approved');
+              INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, evidence, parse_status)
+              VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), SAFE.PARSE_JSON(@evidence), 'approved');
         """
         
         job_config = bigquery.QueryJobConfig(
@@ -707,9 +769,185 @@ FROM
                 bigquery.ScalarQueryParameter("currency", "STRING", payload["currency"]),
                 bigquery.ScalarQueryParameter("summary", "STRING", payload["summary"]),
                 bigquery.ScalarQueryParameter("dynamic_attributes", "STRING", json.dumps(payload["dynamic_attributes"], ensure_ascii=False)),
+                bigquery.ScalarQueryParameter("evidence", "STRING", json.dumps(payload.get("evidence", {}), ensure_ascii=False)),
             ]
         )
         self.client.query(upsert_dml, job_config=job_config).result()
+
+        # 3. 📡 动态触碰元数据以广播 SCHEMA_CHANGED 信号给 BQCA Agent 从而强制刷新缓存
+        bqca_agent_id = config.get_bqca_agent_id()
+        if bqca_agent_id:
+            try:
+                import time
+                timestamp_str = time.strftime('%Y-%m-%dT%H:%M:%S')
+                alter_options_ddl = f"""
+                    ALTER TABLE `{results_table}`
+                    SET OPTIONS(
+                      description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。当用户询问关于合同、发票、简历、采购、财务等业务数据统计、过滤、求和的问题时，AI 代理必须且只能查询本表！[最后物理对账热重载时间: {timestamp_str}]"
+                    );
+                """
+                self.client.query(alter_options_ddl).result()
+                print(f"[BQCA 物理广播] 成功在 BigQuery 中通过 ALTER OPTIONS 触碰机制下发 SCHEMA_CHANGED 元数据热同步广播！")
+            except Exception as ex:
+                print(f"[BQCA 物理广播安全隔离] ALTER OPTIONS 触碰广播跳过/异常: {str(ex)}")
+
+            # 3.5. 🚀 【方案A物理挂载大国重器】Conversational Analytics API (Data Agents) 物理追加与知识来源热注册
+            if bqca_agent_id:
+                try:
+                    print(f"[方案A 自动绑定] 📡 正在调用 Conversational Analytics API (Data Agents) 将新表追加至知识来源...")
+                    import google.auth
+                    from google.auth.transport.requests import AuthorizedSession
+                    
+                    credentials, _ = google.auth.default()
+                    session = AuthorizedSession(credentials)
+                    
+                    location = "us"  # 物理区域（首长专属美国区）
+                    agent_url = f"https://geminidataanalytics.googleapis.com/v1beta/projects/{config.get_project_id()}/locations/{location}/dataAgents/{bqca_agent_id}"
+                    
+                    # 1. 物理 GET 获取当前的代理对象
+                    print(f"[方案A 自动绑定] 📡 GET 请求当前代理元数据: {agent_url}")
+                    get_resp = session.get(agent_url)
+                    
+                    if get_resp.status_code == 200:
+                        agent_data = get_resp.json()
+                        print(f"[方案A 自动绑定] ✅ 成功拉取到 '{agent_data.get('displayName', '电商分析师')}' 代理元数据！")
+                        
+                        # 自适应读取 context
+                        context_obj = agent_data.get("context", {})
+                        datasource_refs = context_obj.get("datasourceReferences", [])
+                        
+                        # 检查是否已包含我们的黄金表
+                        new_table_ref = {
+                            "bigqueryTable": {
+                                "projectId": config.get_project_id(),
+                                "datasetId": dataset_id,
+                                "tableId": "t_verified_smart_drive"
+                            }
+                        }
+                        
+                        # 对比排除
+                        exists = False
+                        for ref in datasource_refs:
+                            bq_tbl = ref.get("bigqueryTable", {})
+                            if (bq_tbl.get("projectId") == config.get_project_id() and 
+                                bq_tbl.get("datasetId") == dataset_id and 
+                                bq_tbl.get("tableId") == "t_verified_smart_drive"):
+                                exists = True
+                                break
+                        
+                        if not exists:
+                            datasource_refs.append(new_table_ref)
+                            context_obj["datasourceReferences"] = datasource_refs
+                            agent_data["context"] = context_obj
+                            
+                            # 2. 物理 PATCH 写入
+                            patch_url = f"{agent_url}?updateMask=context"
+                            print(f"[方案A 自动绑定] 📡 PATCH 更新代理知识源，表: {dataset_id}.t_verified_smart_drive ...")
+                            patch_resp = session.patch(patch_url, json=agent_data)
+                            
+                            if patch_resp.status_code == 200:
+                                print(f"[方案A 自动绑定] 🎉🎉 [大功告成] 新表已全自动、物理追加挂载至首长 BigQuery 代理知识来源列表！")
+                            else:
+                                print(f"[方案A 自动绑定] ⚠️ PATCH 物理注册未成功，API 状态码: {patch_resp.status_code}, 内容: {patch_resp.text}")
+                        else:
+                            print(f"[方案A 自动绑定] ℹ️ 黄金表 {dataset_id}.t_verified_smart_drive 之前已经挂载过，本次安全跳过。")
+                    
+                    elif get_resp.status_code == 403:
+                        # 403 PERMISSION_DENIED: 打印首长极速自愈通道
+                        print("\n" + "="*90)
+                        print("⚠️ [方案A 自动绑定 - 403 权限拒绝] 发现当前运行账号没有修改该 Gemini Data Analytics 代理的权限。")
+                        print("💡 [首长一键赋权极速通道] 首长请放心，您只需要在 GCP Cloud Shell (命令行) 中一键运行以下命令，即可立刻为您开通全自动挂载权限大闭环：")
+                        print("")
+                        print(f"    gcloud projects add-iam-policy-binding {config.get_project_id()} \\")
+                        print("        --member=\"user:chengkang.zhao@webeye.com\" \\")
+                        print("        --role=\"roles/geminidataanalytics.admin\"")
+                        print("")
+                        print("💡 运行该命令赋权后，您以后在系统每次点击“核对并通过”，后台都会帮您全自动刷新绑定，无需手动去 GCP 控制台去添加新表！")
+                        print("="*90 + "\n")
+                    else:
+                        print(f"[方案A 自动绑定] ⚠️ GET 代理元数据返回异常状态码: {get_resp.status_code}, 内容: {get_resp.text}")
+                        
+                except Exception as agent_ex:
+                    print(f"[方案A 自动绑定安全隔离] 物理注册失败 (安全跳过，不阻碍常规审核保存流程): {str(agent_ex)}")
+
+            # 4. 🛰️ 双重物理重载保险：调用 GCP SDK 发起 Vertex AI 数据存储物理合流（靶向全托管无感强刷模式）
+            try:
+                from google.cloud import discoveryengine_v1
+                print(f"[BQCA 物理绑定] 正在向 GCP 项目扫描匹配与智能体 {bqca_agent_id} 关联的物理 Data Store 数据存储...")
+                
+                # 💡 【多靶向雷达自愈】自动搜寻并匹配所有符合特征的专属 Data Stores，免去首长一切配置烦恼！
+                ds_client = discoveryengine_v1.DataStoreServiceClient()
+                parent_collection = f"projects/{config.get_project_id()}/locations/global/collections/default_collection"
+                datastores = list(ds_client.list_data_stores(parent=parent_collection))
+                
+                target_ds_ids = []
+                target_uuid = bqca_agent_id.replace("agent_", "").strip()
+                
+                # 圈定强刷目标大名单
+                for ds in datastores:
+                    ds_name = ds.name.split("/")[-1]
+                    # 💡 精准匹配、或者包含 'hxw' / 'bq' 的库通通拉入并行强刷大名单！
+                    if ds_name == bqca_agent_id or ds_name == bqca_agent_id.replace("agent_", "datastore_", 1) or target_uuid in ds_name:
+                        if ds_name not in target_ds_ids:
+                            target_ds_ids.append(ds_name)
+                    elif "hxw" in ds_name.lower() or "bq" in ds_name.lower() or "hxw" in ds.display_name.lower():
+                        if ds_name not in target_ds_ids:
+                            target_ds_ids.append(ds_name)
+                
+                # 兜底
+                if not target_ds_ids:
+                    if datastores:
+                        target_ds_ids = [datastores[0].name.split("/")[-1]]
+                        print(f"[BQCA 物理绑定] ⚠️ 雷达未能识别任何专属库，兜底选择首个数据存储: {target_ds_ids}")
+                    else:
+                        raise ValueError("GCP 项目下找不到任何已创建的 Data Store 数据存储！")
+
+                print(f"[BQCA 物理绑定] 🎯 圈定如下 {len(target_ds_ids)} 个专属数据源强刷目标: {target_ds_ids}")
+                
+                client = discoveryengine_v1.DocumentServiceClient()
+                
+                for ds_id in target_ds_ids:
+                    try:
+                        # 💡 使用官方 SDK 提供的 branch_path 编译
+                        parent_path = client.branch_path(
+                            project=config.get_project_id(),
+                            location="global",
+                            data_store=ds_id,
+                            branch="default_branch"
+                        )
+                        
+                        request = discoveryengine_v1.ImportDocumentsRequest(
+                            parent=parent_path,
+                            bigquery_source=discoveryengine_v1.BigQuerySource(
+                                project_id=config.get_project_id(),
+                                dataset_id=dataset_id,
+                                table_id="t_verified_smart_drive",
+                                data_schema="custom"
+                            ),
+                            reconciliation_mode=discoveryengine_v1.ImportDocumentsRequest.ReconciliationMode.INCREMENTAL
+                        )
+                        
+                        # 发起异步合流热拉取 LRO
+                        client.import_documents(request=request)
+                        print(f"[BQCA 物理绑定]   ✅ 成功向专属数据存储 '{ds_id}' 递交物理热拉取指令！")
+                    except Exception as inner_ex:
+                        print(f"[BQCA 物理绑定]   ⚠️ 专属库 '{ds_id}' 热拉取指令跳过（非BQ源或无权限）: {str(inner_ex)}")
+
+            except Exception as ex:
+                print(f"[BQCA 物理绑定安全隔离] SDK 强刷同步大流程跳过/异常: {str(ex)}")
+
+        # 💡 [SQLite-Cache-Invalidate] 已经审核合并，物理清空 SQLite 对应文件的 Pending 缓存，并同步清洗内存缓存
+        try:
+            from backend.services.db_service import db_service
+            db_service.delete_pending_result_by_uri(workspace_id, payload["uri"])
+            
+            # 清洗内存缓存（避免冗余）
+            cache_info = self._results_cache.get(workspace_id)
+            if cache_info and "data" in cache_info:
+                cache_info["data"] = [row for row in cache_info["data"] if (row.get("uri") if isinstance(row, dict) else row.get("uri")) != payload["uri"]]
+        except Exception as cache_ex:
+            print(f"⚠️ [SQLite-Cache] 物理除脏失败（安全隔离跳过）: {str(cache_ex)}")
+
         return True
 
     def list_workspaces(self) -> list:

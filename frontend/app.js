@@ -554,7 +554,7 @@ function injectConfigPanelToHeader() {
                     <i class="fa-solid fa-triangle-exclamation" style="color:var(--accent-pink); margin-right: 4px;"></i> <b>架构老炮保姆指南：</b> 智能网盘转换工具在云端大模型分析时，支持即时动态插拔、100% 区域对齐自愈、并自适应重构部署 BigQuery 外部表 DDL。配置保存后自动生效，无需重启后台！
                 </p>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">GCP 项目 ID (Project ID)</label>
                         <input type="text" id="gcp-input-project" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: webeye-internal-test">
@@ -566,6 +566,10 @@ function injectConfigPanelToHeader() {
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">BQ 物理外部连接 (Connection Name)</label>
                         <input type="text" id="gcp-input-connection" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: bqca_external_connection">
+                    </div>
+                    <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
+                        <label style="font-size:12px; font-weight:600; color: var(--text-muted);">💡 BQCA 智能体绑定 ID (GCP Agent ID)</label>
+                        <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: agent_55fb1617...">
                     </div>
                 </div>
 
@@ -646,6 +650,7 @@ function injectConfigPanelToHeader() {
                 document.getElementById("gcp-input-project").value = result.data.gcp_project_id || "";
                 document.getElementById("gcp-input-bucket").value = result.data.gcs_bucket_name || "";
                 document.getElementById("gcp-input-connection").value = result.data.bq_connection_name || "";
+                document.getElementById("gcp-input-agent-id").value = result.data.bqca_agent_id || "";
                 
                 // 状态灯更新
                 const pill = document.getElementById("gcp-probe-status-pill");
@@ -669,6 +674,7 @@ function injectConfigPanelToHeader() {
             const projectId = document.getElementById("gcp-input-project").value.trim();
             const bucketName = document.getElementById("gcp-input-bucket").value.trim();
             const connectionName = document.getElementById("gcp-input-connection").value.trim();
+            const bqcaAgentId = document.getElementById("gcp-input-agent-id").value.trim();
 
             if (!projectId || !bucketName || !connectionName) {
                 showToast("配置不可为空", "听哥劝，GCP三要素（项目ID、桶名、连接名）可不能留空！", "error");
@@ -689,7 +695,8 @@ function injectConfigPanelToHeader() {
                     body: JSON.stringify({
                         gcp_project_id: projectId,
                         gcs_bucket_name: bucketName,
-                        bq_connection_name: connectionName
+                        bq_connection_name: connectionName,
+                        bqca_agent_id: bqcaAgentId
                     })
                 });
                 const saveJson = await saveRes.json();
@@ -707,7 +714,8 @@ function injectConfigPanelToHeader() {
                     body: JSON.stringify({
                         gcp_project_id: projectId,
                         gcs_bucket_name: bucketName,
-                        bq_connection_name: connectionName
+                        bq_connection_name: connectionName,
+                        bqca_agent_id: bqcaAgentId
                     })
                 });
                 const verifyJson = await verifyRes.json();
@@ -1414,7 +1422,8 @@ btnHilSubmit.onclick = async () => {
         amount: parseFloat(document.getElementById("hil-amount").value) || null,
         currency: document.getElementById("hil-currency").value.trim().toUpperCase(),
         summary: document.getElementById("hil-summary").value.trim(),
-        dynamic_attributes: JSON.parse(document.getElementById("hil-dynamics").value)
+        dynamic_attributes: JSON.parse(document.getElementById("hil-dynamics").value),
+        evidence: analysisResults[currentReviewIndex].evidence || {}
     };
 
     try {

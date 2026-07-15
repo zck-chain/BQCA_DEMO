@@ -15,24 +15,27 @@ class ConfigPayload(BaseModel):
     gcp_project_id: str
     gcs_bucket_name: str
     bq_connection_name: str
+    bqca_agent_id: str = None
 
 
 @router.get("/")
 def get_system_config():
     """
-    获取当前 SQLite 中注册的 GCP 三要素配置
+    获取当前 SQLite 中注册的 GCP 三要素及 BQCA Agent ID 配置
     """
     try:
         project_id = db_service.get_system_config("gcp_project_id", "webeye-internal-test")
         bucket_name = db_service.get_system_config("gcs_bucket_name", "bqca-demo")
         connection_name = db_service.get_system_config("bq_connection_name", "bqca_external_connection")
+        bqca_agent_id = db_service.get_system_config("bqca_agent_id", "")
         
         return {
             "success": True,
             "data": {
                 "gcp_project_id": project_id,
                 "gcs_bucket_name": bucket_name,
-                "bq_connection_name": connection_name
+                "bq_connection_name": connection_name,
+                "bqca_agent_id": bqca_agent_id
             }
         }
     except Exception as e:
@@ -42,16 +45,17 @@ def get_system_config():
 @router.post("/save")
 def save_system_config(payload: ConfigPayload):
     """
-    持久化保存用户输入的 GCP 三要素
+    持久化保存用户输入的 GCP 三要素及 BQCA Agent ID
     """
     try:
         db_service.set_system_config("gcp_project_id", payload.gcp_project_id.strip())
         db_service.set_system_config("gcs_bucket_name", payload.gcs_bucket_name.strip())
         db_service.set_system_config("bq_connection_name", payload.bq_connection_name.strip())
+        db_service.set_system_config("bqca_agent_id", (payload.bqca_agent_id or "").strip())
         
         return {
             "success": True,
-            "message": "GCP中控连接参数已成功持久化保存！"
+            "message": "GCP中控连接参数与 BQCA Agent ID 已成功持久化保存！"
         }
     except Exception as e:
         return {"success": False, "message": f"保存配置失败: {str(e)}"}

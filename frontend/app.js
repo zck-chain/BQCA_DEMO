@@ -1152,10 +1152,13 @@ btnTriggerAnalyze.onclick = async () => {
 
 function pollAnalysisResults() {
     let attempts = 0;
-    const interval = setInterval(async () => {
+    const maxAttempts = 12; // 最多轮询 1 分钟
+    let isTerminated = false;
+
+    async function doPoll() {
+        if (isTerminated) return;
         attempts++;
-        if (attempts > 12) { // 最多轮询 1 分钟
-            clearInterval(interval);
+        if (attempts > maxAttempts) {
             showToast("编译时间较长", "提取视图热重构编译较慢，系统将在后台继续，请稍后手动刷新列表。", "warning", 6000);
             resetAnalyzeButtonState();
             return;
@@ -1165,17 +1168,31 @@ function pollAnalysisResults() {
             const res = await fetch(`${API_BASE}/api/workspace/results/${currentWorkspace}`);
             const result = await res.json();
 
-            if (result.success && result.data.length > 0) {
-                clearInterval(interval);
-                analysisResults = result.data;
+            // 🧪 状态驱动精准熔断
+            if (result.success && result.status && result.status !== "running") {
+                isTerminated = true; // 立即将终结锁置为 true，拦截一切并发重入
+                analysisResults = result.data || [];
                 renderAnalysisTable();
                 resetAnalyzeButtonState();
-                showToast("提取 & 编译完成", "两阶段自适应大模型分析已完成，拆列提取结果已完美呈现且在 BigQuery 就绪！", "success", 5000);
+                if (result.status === "done") {
+                    showToast("提取 & 编译完成", "两阶段自适应大模型分析已完成，拆列提取结果已完美呈现且在 BigQuery 就绪！", "success", 5000);
+                } else if (result.status === "error") {
+                    showToast("分析发生部分异常", "大模型在后台执行编译视图时遭遇报错，已安全降级，请检查底座配置或刷新重试。", "warning", 6000);
+                }
+                return; // 满足结束条件，物理终止递归
             }
         } catch (e) {
-            console.error(e);
+            console.error("轮询异常:", e);
         }
-    }, 5000);
+
+        // 如果未被终结且还在 running，5秒后启动下一次，天然 100% 物理串行！
+        if (!isTerminated) {
+            setTimeout(doPoll, 5000);
+        }
+    }
+
+    // 延时 5 秒启动首次串行轮询
+    setTimeout(doPoll, 5000);
 }
 
 function resetAnalyzeButtonState() {

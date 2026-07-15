@@ -143,7 +143,14 @@ def trigger_workspace_analysis(payload: TriggerAnalysisRequest, background_tasks
 def get_extracted_results(workspace_id: str):
     try:
         results = bq_service.fetch_extraction_results(workspace_id)
-        return {"success": True, "data": results}
+        # 🧪 【状态驱动网关】动态拉取缓存中的状态状态机，支持前台实现极客、零时差、状态机驱动的状态同步！
+        cache_info = bq_service._results_cache.get(workspace_id, {})
+        status = cache_info.get("status", "idle")
+        return {
+            "success": True, 
+            "data": results,
+            "status": status
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取 AI 解析结果失败: {str(e)}")
 

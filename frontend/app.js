@@ -1283,11 +1283,79 @@ window.openHumanReview = function(index) {
     document.getElementById("hil-uri").value = data.uri;
     document.getElementById("hil-doc-type").value = data.doc_type;
     document.getElementById("hil-title").value = data.doc_title;
-    document.getElementById("hil-parties").value = data.parties.join(", ");
+    document.getElementById("hil-parties").value = data.parties ? (Array.isArray(data.parties) ? data.parties.join(", ") : data.parties) : "";
     document.getElementById("hil-amount").value = data.amount || "";
     document.getElementById("hil-currency").value = data.currency || "CNY";
     document.getElementById("hil-summary").value = data.summary;
-    document.getElementById("hil-dynamics").value = JSON.stringify(data.dynamic_attributes, null, 2);
+    
+    // 🧪 【自适应表单生长器】核心拼装
+    const dynFormContainer = document.getElementById("hil-dynamics-form-container");
+    dynFormContainer.innerHTML = "";
+    
+    // 初始化本地修改对象
+    let currentDynamics = { ...data.dynamic_attributes };
+    document.getElementById("hil-dynamics").value = JSON.stringify(currentDynamics, null, 2);
+
+    // 动态生成输入框
+    if (currentDynamics && Object.keys(currentDynamics).length > 0) {
+        for (let key in currentDynamics) {
+            const formGroup = document.createElement("div");
+            formGroup.style = "display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;";
+            
+            // 翻译字段名称（中英文映射，提升非极客用户的易读性）
+            let labelText = key;
+            if (key === "buyer") labelText = "采购方 / 甲方 (buyer)";
+            else if (key === "seller") labelText = "供货方 / 乙方 (seller)";
+            else if (key === "delivery_deadline") labelText = "最晚交货期 (delivery_deadline)";
+            else if (key === "warranty_years") labelText = "质保期 (warranty_years)";
+            else if (key === "job_title") labelText = "应聘岗位 (job_title)";
+            else if (key === "skills") labelText = "核心技术栈 (skills)";
+
+            formGroup.innerHTML = `
+                <label style="font-size: 11px; color: rgba(255,255,255,0.6); margin-bottom: 2px;">${labelText}</label>
+                <input type="text" class="dyn-input-field" data-key="${key}" value="${currentDynamics[key] || ""}" 
+                       style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 8px; color: #fff; font-size: 12px; outline: none; transition: all 0.3s;" />
+            `;
+            
+            const inputNode = formGroup.querySelector("input");
+            
+            // (A) 事件监听 1：动态向后兼容回写
+            inputNode.oninput = function(e) {
+                currentDynamics[key] = e.target.value;
+                document.getElementById("hil-dynamics").value = JSON.stringify(currentDynamics, null, 2);
+            };
+            
+            // (B) 事件监听 2：聚焦时一键高亮左侧对应的证据引用段
+            inputNode.onfocus = function() {
+                inputNode.style.border = "1px solid var(--accent-pink)";
+                inputNode.style.background = "rgba(236, 72, 153, 0.05)";
+                // 一键定位左侧证据
+                const evItem = document.getElementById(`evidence-item-${key}`);
+                if (evItem) {
+                    evItem.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    evItem.style.background = "rgba(236, 72, 153, 0.15)";
+                    evItem.style.border = "1px solid var(--accent-pink)";
+                    evItem.style.boxShadow = "0 0 10px rgba(236, 72, 153, 0.3)";
+                }
+            };
+            
+            // (C) 事件监听 3：失焦恢复
+            inputNode.onblur = function() {
+                inputNode.style.border = "1px solid rgba(255,255,255,0.1)";
+                inputNode.style.background = "rgba(255,255,255,0.05)";
+                const evItem = document.getElementById(`evidence-item-${key}`);
+                if (evItem) {
+                    evItem.style.background = "rgba(255,255,255,0.03)";
+                    evItem.style.border = "1px solid rgba(255,255,255,0.08)";
+                    evItem.style.boxShadow = "none";
+                }
+            };
+
+            dynFormContainer.appendChild(formGroup);
+        }
+    } else {
+        dynFormContainer.innerHTML = `<div style="font-size:11px; color:rgba(255,255,255,0.4); text-align:center; padding: 12px 0;">该分类模板无特有自定义属性。</div>`;
+    }
 
     // 2. 动态注入左侧证据链原文 (Evidence Quotes) - 【智能自适应双保险解析器】
     evidenceContainer.innerHTML = "";
@@ -1308,9 +1376,11 @@ window.openHumanReview = function(index) {
         for (let key in evidenceObj) {
             const block = document.createElement("div");
             block.className = "evidence-item";
+            block.id = `evidence-item-${key}`; // 为一键对应提供物理 ID
+            block.style = "background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 10px; margin-bottom: 10px; transition: all 0.3s;";
             block.innerHTML = `
-                <div class="evidence-field"><i class="fa-solid fa-quote-left"></i> ${key} 提取依据</div>
-                <div class="evidence-quote">“${evidenceObj[key]}”</div>
+                <div class="evidence-field" style="font-size: 11px; color: var(--accent-pink); font-weight:600; margin-bottom: 4px;"><i class="fa-solid fa-quote-left"></i> ${key} 提取依据</div>
+                <div class="evidence-quote" style="font-size: 12px; color: rgba(255,255,255,0.85); line-height: 1.4;">“${evidenceObj[key]}”</div>
             `;
             evidenceContainer.appendChild(block);
         }

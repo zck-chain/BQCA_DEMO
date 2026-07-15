@@ -169,31 +169,101 @@ class BigQueryService:
             top_p_val = t.get("top_p", 0.95)
 
             # -------------------------------------------------------------------------
-            # 🚀【自适应列建模】动态抓取用户提示词中的 JSON Schema 属性字段，作为 BigQuery 一等公民独立列
+            # 🚀【高可用元数据自适应编译网关】
+            # 用括号栈物理提取提示词中的最外层 Schema 示例 JSON 串，并反序列化动态映射 BigQuery 视图列
             # -------------------------------------------------------------------------
+            import json
             import re
-            json_candidates = re.findall(r'\{[\s\S]*?\}', t["prompt_template"])
-            custom_fields = []
-            for cand in json_candidates:
-                # 匹配 `"key" :` 或者 `'key' :`
-                keys = re.findall(r'["\']([a-zA-Z0-9_]+)["\']\s*:', cand)
-                for k in keys:
-                    if k.lower() not in ["doc_type", "doc_title", "confidence_score", "evidence", "raw_text", "clean_json_str", "uri"]:
-                        if k not in custom_fields:
-                            custom_fields.append(k)
 
-            # -------------------------------------------------------------------------
-            # 💎 极致净化：BigQuery 物理视图只投影 'uri', 'doc_type' 加上你真正关心的自定义提取字段！
-            # -------------------------------------------------------------------------
             custom_columns_sql = []
-            for cf in custom_fields:
-                is_num = cf.lower() in ["amount", "total_amount", "price", "total_price", "total_pay", "fee"]
-                if is_num:
-                    col_clause = f"  SAFE_CAST(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{cf}') AS FLOAT64) AS {cf}"
-                else:
-                    col_clause = f"  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{cf}') AS {cf}"
-                custom_columns_sql.append(col_clause)
-                
+            custom_fields = []
+
+            # (A) 通过括号栈匹配，精准定位并提取 prompt_template 中最外层的大括号 JSON 样本
+            prompt_str = t["prompt_template"]
+            start_idx = prompt_str.find("{")
+            if start_idx != -1:
+                brace_count = 0
+                end_idx = -1
+                for idx in range(start_idx, len(prompt_str)):
+                    char = prompt_str[idx]
+                    if char == "{":
+                        brace_count += 1
+                    elif char == "}":
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = idx
+                            break
+                if end_idx != -1:
+                    json_sample_str = prompt_str[start_idx:end_idx+1]
+                    try:
+                        # 清洗注释或特殊干扰
+                        json_sample_str = re.sub(r'//.*', '', json_sample_str)
+                        # 反序列化
+                        schema_dict = json.loads(json_sample_str)
+                        
+                        # (B) 精准推导并编译 SQL JSON 提取路径
+                        # 1. 顶级主干单值字段
+                        for k, v in schema_dict.items():
+                            if k.lower() in ["doc_type", "doc_title", "confidence_score", "evidence", "raw_text", "clean_json_str", "uri"]:
+                                continue
+                            # 过滤非英文字符列名，防范 BigQuery syntax BadRequest 报错
+                            if not re.match(r'^[a-zA-Z0-9_]+$', k):
+                                continue
+                            # 如果是数组或对象，用 JSON_QUERY，防止被提取为 NULL
+                            if isinstance(v, (list, dict)) and k != "dynamic_attributes" and k != "key_dates":
+                                custom_columns_sql.append(f"  JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.{k}') AS {k}")
+                                custom_fields.append(k)
+                            elif not isinstance(v, (list, dict)):
+                                is_num = k.lower() in ["amount", "total_amount", "price", "total_price", "total_pay", "fee"]
+                                if is_num:
+                                    custom_columns_sql.append(f"  SAFE_CAST(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{k}') AS FLOAT64) AS {k}")
+                                else:
+                                    custom_columns_sql.append(f"  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{k}') AS {k}")
+                                custom_fields.append(k)
+
+                        # 2. 动态嵌套子属性 dynamic_attributes (极客专区：多模态核心属性在此提取)
+                        dyn_attrs = schema_dict.get("dynamic_attributes", {})
+                        if isinstance(dyn_attrs, dict):
+                            for k, v in dyn_attrs.items():
+                                if not re.match(r'^[a-zA-Z0-9_]+$', k):
+                                    continue
+                                if k not in custom_fields:
+                                    is_num = k.lower() in ["amount", "total_amount", "price", "total_price", "total_pay", "fee"]
+                                    if is_num:
+                                        custom_columns_sql.append(f"  SAFE_CAST(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.dynamic_attributes.{k}') AS FLOAT64) AS {k}")
+                                    else:
+                                        custom_columns_sql.append(f"  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.dynamic_attributes.{k}') AS {k}")
+                                    custom_fields.append(k)
+
+                        # 3. 时间嵌套子属性 key_dates
+                        kd_attrs = schema_dict.get("key_dates", {})
+                        if isinstance(kd_attrs, dict):
+                            for k, v in kd_attrs.items():
+                                if not re.match(r'^[a-zA-Z0-9_]+$', k):
+                                    continue
+                                if k not in custom_fields:
+                                    custom_columns_sql.append(f"  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.key_dates.{k}') AS {k}")
+                                    custom_fields.append(k)
+
+                    except Exception as json_err:
+                        print(f"⚠️ [JSON-Parser] 尝试通过 Stack 匹配反解 Prompt JSON 失败: {str(json_err)}，使用正则兜底。")
+
+            # (C) 降级正则兜底：如果上面的栈匹配反序列化因为 JSON 格式不规范出错，自动降级为传统正则
+            if not custom_columns_sql:
+                print("ℹ️ [JSON-Parser] 执行自适应正则兜底列提取...")
+                json_candidates = re.findall(r'\{[\s\S]*?\}', prompt_str)
+                for cand in json_candidates:
+                    keys = re.findall(r'["\']([a-zA-Z0-9_]+)["\']\s*:', cand)
+                    for k in keys:
+                        if k.lower() not in ["doc_type", "doc_title", "confidence_score", "evidence", "raw_text", "clean_json_str", "uri", "dynamic_attributes", "key_dates"]:
+                            if k not in custom_fields:
+                                is_num = k.lower() in ["amount", "total_amount", "price", "total_price", "total_pay", "fee"]
+                                if is_num:
+                                    custom_columns_sql.append(f"  SAFE_CAST(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{k}') AS FLOAT64) AS {k}")
+                                else:
+                                    custom_columns_sql.append(f"  JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.{k}') AS {k}")
+                                custom_fields.append(k)
+
             custom_columns_str = ",\n".join(custom_columns_sql)
             if custom_columns_str:
                 custom_columns_str = ",\n" + custom_columns_str

@@ -182,9 +182,11 @@
                             <textarea id="hil-summary" rows="3" required></textarea>
                         </div>
 
+                        <!-- 🧬 【自适应特有属性动态表单生长器】废除冷冰冰的原始 JSON 文本域，实现 100% 数据驱动的自适应输入组件 -->
                         <div class="form-group">
-                            <label>自适应特有属性 (Dynamic JSON Attributes)</label>
-                            <textarea id="hil-dynamics" rows="4" style="font-family: monospace; font-size:12px;" required></textarea>
+                            <label style="color: var(--accent-pink); font-weight: 600;"><i class="fa-solid fa-cube"></i> 专家模板特定字段 (Dynamic Attributes)</label>
+                            <div id="hil-dynamics-form-container" style="display: flex; flex-direction: column; gap: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);"></div>
+                            <textarea id="hil-dynamics" style="display: none;"></textarea> <!-- 保留隐藏节点以防向后兼容接口断裂 -->
                         </div>
 
                         <div class="form-actions" style="margin-top:24px;">

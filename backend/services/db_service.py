@@ -55,18 +55,42 @@ class DatabaseService:
             if count == 0:
                 print("🌱 [SQLite-Seed] 检测到模板数据库为空，正在注入四大黄金内置专家模板种子...")
                 
-                default_contract = """你是一位极其严谨的资深采购与法务审计专家。请仔细审阅这份合同。你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
+                default_contract = """你是一位极其严谨的资深采购与法务审计专家。请仔细审阅这份合同。
+你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
 {
   "doc_title": "合同主标题",
   "parties": ["甲方公司名称", "乙方公司名称"],
-  "key_dates": {"签署日期": "YYYY-MM-DD", "截止日期": "YYYY-MM-DD"},
+  "key_dates": {
+    "签署日期": "YYYY-MM-DD", 
+    "截止日期": "YYYY-MM-DD"
+  },
   "amount": 100000.00,
   "currency": "CNY",
-  "summary": "合同核心摘要",
-  "dynamic_attributes": {"delivery_deadline": "最晚交货期", "warranty_years": "质保期"},
+  "summary": "合同核心采购标的和履约责任摘要（100字内）",
+  "dynamic_attributes": {
+    "buyer": "合同甲方(采购方)单位全称",
+    "seller": "合同乙方(供货方)单位全称",
+    "delivery_deadline": "最晚交货期限",
+    "warranty_years": "质保年限"
+  },
   "confidence_score": "high",
-  "evidence": {"parties": "依据段落", "amount": "依据段落"}
-}"""
+  "evidence": {
+    "doc_title": "确定合同标题的原文段落",
+    "parties": "确定签署双方(甲乙方)全称的原文条款原句",
+    "key_dates": "确定合同签署日期与截止日期的原文条款原句",
+    "amount": "确定合同总金额的原文条款原句",
+    "currency": "确定计价货币的原文条款原句",
+    "summary": "确定核心标的、履约责任对应的原文条款原句",
+    "buyer": "确定甲方采购方名称的原文条款原句",
+    "seller": "确定乙方供货方名称的原文条款原句",
+    "delivery_deadline": "确定最晚交货期限的原文条款原句",
+    "warranty_years": "确定质保年限的原文条款原句"
+  }
+}
+
+【判定来源法务审计要求】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的 buyers/sellers/delivery_deadline 等）提供在合同原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到合同章节条款（如：“根据第二条第1款：交货期限为...”），绝不可含糊编造。若无原文提及，请写“未在合同原文中提及”。"""
                 
                 default_resume = """你是一位资深猎头和 HR 总监。请评估这份简历，严格以标准的纯 JSON 格式输出，格式如下：
 {

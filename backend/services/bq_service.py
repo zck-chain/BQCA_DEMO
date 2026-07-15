@@ -792,65 +792,109 @@ FROM
                 print(f"[BQCA 物理广播安全隔离] ALTER OPTIONS 触碰广播跳过/异常: {str(ex)}")
 
             # 3.5. 🚀 【方案A物理挂载大国重器】Conversational Analytics API (Data Agents) 物理追加与知识来源热注册
-            if bqca_agent_id:
+            # 💡 自适应兜底：若首长配置为空或为历史老ID，我们自动帮首长识别并寻址到真正的“电商分析师”大本尊！
+            target_agent_id = bqca_agent_id if bqca_agent_id else "agent_5a77361e-3039-41b5-9925-55588ef09837"
+            if target_agent_id == "agent_55fb1617-3634-4d54-89f3-5f33aeff5f84":
+                # 智能热温重载：自动将老ID纠偏为真实的电商分析师物理 ID
+                target_agent_id = "agent_5a77361e-3039-41b5-9925-55588ef09837"
+
+            if target_agent_id:
                 try:
-                    print(f"[方案A 自动绑定] 📡 正在调用 Conversational Analytics API (Data Agents) 将新表追加至知识来源...")
+                    print(f"[方案A 自动绑定] 📡 正在调用 Conversational Analytics API (Data Agents) 将黄金新表追加至知识来源...")
                     import google.auth
                     from google.auth.transport.requests import AuthorizedSession
                     
                     credentials, _ = google.auth.default()
                     session = AuthorizedSession(credentials)
                     
-                    location = "us"  # 物理区域（首长专属美国区）
-                    agent_url = f"https://geminidataanalytics.googleapis.com/v1beta/projects/{config.get_project_id()}/locations/{location}/dataAgents/{bqca_agent_id}"
+                    location = "global"  # 物理对账：电商分析师真身位于 global 全局统一托管区
+                    agent_url = f"https://geminidataanalytics.googleapis.com/v1beta/projects/{config.get_project_id()}/locations/{location}/dataAgents/{target_agent_id}"
+                    
+                    headers = {
+                        "X-Goog-User-Project": config.get_project_id()
+                    }
                     
                     # 1. 物理 GET 获取当前的代理对象
                     print(f"[方案A 自动绑定] 📡 GET 请求当前代理元数据: {agent_url}")
-                    get_resp = session.get(agent_url)
+                    get_resp = session.get(agent_url, headers=headers)
                     
                     if get_resp.status_code == 200:
                         agent_data = get_resp.json()
                         print(f"[方案A 自动绑定] ✅ 成功拉取到 '{agent_data.get('displayName', '电商分析师')}' 代理元数据！")
                         
-                        # 自适应读取 context
+                        # 🎯 提取当前 context (即 API 物理定义的 publishedContext)
                         context_obj = agent_data.get("context", {})
-                        datasource_refs = context_obj.get("datasourceReferences", [])
+                        datasource_refs = context_obj.get("datasourceReferences", {})
+                        bq_obj = datasource_refs.get("bq", {})
+                        table_refs = bq_obj.get("tableReferences", [])
                         
-                        # 检查是否已包含我们的黄金表
+                        # 💡 【9个核心老表完璧归赵大白名单机制】
+                        original_9_tables = [
+                            {"projectId": config.get_project_id(), "datasetId": "firebas_bq", "tableId": "v_product_ai_insights"},
+                            {"projectId": config.get_project_id(), "datasetId": "firebas_bq", "tableId": "v_structured_invoices"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "distribution_centers"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "events"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "inventory_items"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "order_items"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "orders"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "products"},
+                            {"projectId": config.get_project_id(), "datasetId": "thelook_bq", "tableId": "users"}
+                        ]
+                        
+                        for orig in original_9_tables:
+                            found_orig = False
+                            for ref in table_refs:
+                                if (ref.get("projectId") == orig["projectId"] and 
+                                    ref.get("datasetId") == orig["datasetId"] and 
+                                    ref.get("tableId") == orig["tableId"]):
+                                    found_orig = True
+                                    break
+                            if not found_orig:
+                                table_refs.append(orig)
+                        
+                        # 构造黄金表引用
                         new_table_ref = {
-                            "bigqueryTable": {
-                                "projectId": config.get_project_id(),
-                                "datasetId": dataset_id,
-                                "tableId": "t_verified_smart_drive"
-                            }
+                            "projectId": config.get_project_id(),
+                            "datasetId": dataset_id,
+                            "tableId": "t_verified_smart_drive"
                         }
                         
-                        # 对比排除
+                        # 查重并追加新黄金表
                         exists = False
-                        for ref in datasource_refs:
-                            bq_tbl = ref.get("bigqueryTable", {})
-                            if (bq_tbl.get("projectId") == config.get_project_id() and 
-                                bq_tbl.get("datasetId") == dataset_id and 
-                                bq_tbl.get("tableId") == "t_verified_smart_drive"):
+                        for ref in table_refs:
+                            if (ref.get("projectId") == config.get_project_id() and 
+                                ref.get("datasetId") == dataset_id and 
+                                ref.get("tableId") == "t_verified_smart_drive"):
                                 exists = True
                                 break
                         
-                        if not exists:
-                            datasource_refs.append(new_table_ref)
+                        if not exists or len(table_refs) < 10:  # 强制进行神级补全
+                            if not exists:
+                                table_refs.append(new_table_ref)
+                            bq_obj["tableReferences"] = table_refs
+                            datasource_refs["bq"] = bq_obj
                             context_obj["datasourceReferences"] = datasource_refs
-                            agent_data["context"] = context_obj
                             
-                            # 2. 物理 PATCH 写入
-                            patch_url = f"{agent_url}?updateMask=context"
-                            print(f"[方案A 自动绑定] 📡 PATCH 更新代理知识源，表: {dataset_id}.t_verified_smart_drive ...")
-                            patch_resp = session.patch(patch_url, json=agent_data)
+                            # 💡 极其硬核：重构 PATCH 的 Payload 结构，对齐 dataAnalyticsAgent 物理可写字段！
+                            patch_payload = {
+                                "displayName": agent_data.get("displayName"),
+                                "description": agent_data.get("description"),
+                                "dataAnalyticsAgent": {
+                                    "publishedContext": context_obj
+                                }
+                            }
+                            
+                            # 2. 执行 PATCH (updateMask 对应可写的 dataAnalyticsAgent 字段)
+                            patch_url = f"{agent_url}?updateMask=dataAnalyticsAgent"
+                            print(f"[方案A 自动绑定] 📡 PATCH 物理追加挂载新表: {dataset_id}.t_verified_smart_drive ...")
+                            patch_resp = session.patch(patch_url, json=patch_payload, headers=headers)
                             
                             if patch_resp.status_code == 200:
-                                print(f"[方案A 自动绑定] 🎉🎉 [大功告成] 新表已全自动、物理追加挂载至首长 BigQuery 代理知识来源列表！")
+                                print(f"[方案A 自动绑定] 🎉🎉🎉 [大功告成] 新表已全自动、100%成功物理追加挂载至首长 BigQuery 代理知识来源列表！")
                             else:
                                 print(f"[方案A 自动绑定] ⚠️ PATCH 物理注册未成功，API 状态码: {patch_resp.status_code}, 内容: {patch_resp.text}")
                         else:
-                            print(f"[方案A 自动绑定] ℹ️ 黄金表 {dataset_id}.t_verified_smart_drive 之前已经挂载过，本次安全跳过。")
+                            print(f"[方案A 自动绑定] ℹ️ 黄金表 {dataset_id}.t_verified_smart_drive 之前已经关联挂载过，本次安全跳过。")
                     
                     elif get_resp.status_code == 403:
                         # 403 PERMISSION_DENIED: 打印首长极速自愈通道

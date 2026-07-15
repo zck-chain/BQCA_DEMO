@@ -350,15 +350,31 @@ FROM
             "error_msg": None
         }
 
+    def _query_extractor_view_directly(self, workspace_id: str) -> list:
+        """
+        【物理直查底座】从 BigQuery 视图中提取原始行并完美转化为原生可序列化 Dict 字典。
+        高度内聚，处理各种跨域 NotFound 和 BigQuery 瞬时异常。
+        """
+        from google.api_core.exceptions import NotFound
+        dataset_id = f"workspace_{workspace_id}"
+        project_id = config.get_project_id()
+        try:
+            query_extractor = f"SELECT * FROM `{project_id}.{dataset_id}.v_stage2_routed_extractor` LIMIT 100"
+            rows = list(self.client.query(query_extractor).result())
+            return [dict(row) for row in rows]
+        except NotFound:
+            print(f"ℹ️ [Query-Direct] 隔离空间 '{workspace_id}' 尚未进行首次 AI 提取，视图 v_stage2_routed_extractor 未创建。")
+            return []
+        except Exception as e:
+            if "not found" in str(e).lower():
+                return []
+            print(f"⚠️ [Query-Direct] 从 BigQuery 直查视图 v_stage2_routed_extractor 瞬时异常: {str(e)}")
+            raise e
+
     def run_background_extraction_to_cache(self, workspace_id: str):
         """
         🚀 核心防雪崩异步执行：在后台仅此一次地物理执行对 BigQuery 大模型视图的查询，并将结果灌入内存缓存
         """
-        import json
-        dataset_id = f"workspace_{workspace_id}"
-        project_id = config.get_project_id()
-        
-        # 强制标记为 running
         self._results_cache[workspace_id] = {
             "status": "running",
             "data": self._results_cache.get(workspace_id, {}).get("data", []),
@@ -367,11 +383,7 @@ FROM
         
         try:
             print(f"⏳ [Background-BQ] 正在后台物理执行 BigQuery 多模态视图查询 (仅此一次，防止雪崩): {workspace_id} ...")
-            query_extractor = f"SELECT * FROM `{project_id}.{dataset_id}.v_stage2_routed_extractor` LIMIT 100"
-            extractor_rows = list(self.client.query(query_extractor).result())
-            
-            # 将 Row 对象解包为 dict，规避 Row 对象断开连接或过期失效的问题
-            serializable_rows = [dict(row) for row in extractor_rows]
+            serializable_rows = self._query_extractor_view_directly(workspace_id)
             
             self._results_cache[workspace_id] = {
                 "status": "done",
@@ -381,7 +393,7 @@ FROM
             print(f"✅ [Background-BQ] 缓存装载成功！大模型提取已完满完成。隔离空间: {workspace_id}, 记录行数: {len(serializable_rows)}")
         except Exception as e:
             self._results_cache[workspace_id] = {
-                "status": "error",
+                "status": "error",  # 传递真实的错误态，引爆前台高颜值警示 Toast 并终止轮询，自愈卡死
                 "data": [],
                 "error_msg": str(e)
             }
@@ -389,27 +401,13 @@ FROM
 
     def _fetch_live_view_extractor_rows(self, workspace_id: str) -> list:
         """冷启动兜底：实时查询视图，并顺便更新进 done 缓存，提供下一次无痛命中"""
-        from google.api_core.exceptions import NotFound
-        dataset_id = f"workspace_{workspace_id}"
-        project_id = config.get_project_id()
-        try:
-            query_extractor = f"SELECT * FROM `{project_id}.{dataset_id}.v_stage2_routed_extractor` LIMIT 100"
-            rows = list(self.client.query(query_extractor).result())
-            serializable_rows = [dict(row) for row in rows]
-            self._results_cache[workspace_id] = {
-                "status": "done",
-                "data": serializable_rows,
-                "error_msg": None
-            }
-            return serializable_rows
-        except NotFound:
-            # 物理视图尚未部署（未进行首次大模型分析），降级返回空列表，绝不抛 500 报错
-            print(f"ℹ️ [Fetch-Results] 隔离空间 '{workspace_id}' 尚未进行首次 AI 提取，视图 v_stage2_routed_extractor 未创建。")
-            return []
-        except Exception as e:
-            if "not found" in str(e).lower():
-                return []
-            raise e
+        serializable_rows = self._query_extractor_view_directly(workspace_id)
+        self._results_cache[workspace_id] = {
+            "status": "done",
+            "data": serializable_rows,
+            "error_msg": None
+        }
+        return serializable_rows
 
     def fetch_extraction_results(self, workspace_id: str) -> list:
         import json
@@ -541,7 +539,7 @@ FROM
 
             # (D) 启发式探活推导签署双方 parties 数组
             parties = []
-            party_keys = ["buyer", "seller", "parties", "party_a", "party_b", "customer", "vendor"]
+            party_keys = ["buyer", "seller", "party_a", "party_b", "customer", "vendor"]
             for pk in party_keys:
                 if pk in row_dict and row_dict.get(pk):
                     parties.append(str(row_dict.get(pk)))

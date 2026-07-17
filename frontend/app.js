@@ -159,6 +159,63 @@ function showToast(title, message, type = "success", duration = 4000) {
     return toast;
 }
 
+// -------------------------------------------------------------------------
+// 2.6 全局高级暗黑磨砂 UI 确认弹窗 (Sleek Glassmorphic Confirm)
+// -------------------------------------------------------------------------
+function showConfirmDialog(title, message, onConfirm) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "99999";
+    overlay.style.backdropFilter = "blur(10px)";
+    overlay.style.webkitBackdropFilter = "blur(10px)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+
+    overlay.innerHTML = `
+        <div class="modal-card" style="max-width: 380px; background: #0b0c16; border: 1px solid rgba(255, 71, 87, 0.3); box-shadow: 0 15px 45px rgba(255, 71, 87, 0.15); border-radius: 12px; text-align: center; padding: 24px; transform: scale(1);">
+            <div style="width: 52px; height: 54px; background: rgba(255, 71, 87, 0.1); color: #ff4757; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto; font-size: 22px; box-shadow: 0 0 15px rgba(255, 71, 87, 0.2);">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 style="margin: 0 0 10px 0; font-size: 15px; color: #fff; font-weight: 700;">${title}</h3>
+            <p style="margin: 0 0 24px 0; font-size: 12px; color: var(--text-muted); line-height: 1.5; padding: 0 8px;">${message}</p>
+            <div style="display: flex; gap: 12px; justify-content: center;">
+                <button id="confirm-btn-cancel" class="sec-btn" style="padding: 8px 18px; font-size: 11.5px; border-radius: 6px; flex: 1; cursor:pointer;">取消</button>
+                <button id="confirm-btn-ok" style="background: linear-gradient(135deg, #ff4757, #ff6b81); border: none; color: #fff; padding: 8px 18px; font-size: 11.5px; border-radius: 6px; cursor: pointer; font-weight: 700; flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; box-shadow: 0 4px 12px rgba(255, 71, 87, 0.3);">
+                    <i class="fa-solid fa-circle-check"></i> 确认执行
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const cancelBtn = overlay.querySelector("#confirm-btn-cancel");
+    const okBtn = overlay.querySelector("#confirm-btn-ok");
+
+    const dismiss = () => {
+        overlay.remove();
+    };
+
+    cancelBtn.onclick = (e) => {
+        e.preventDefault();
+        dismiss();
+    };
+
+    okBtn.onclick = async (e) => {
+        e.preventDefault();
+        okBtn.disabled = true;
+        okBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 处理中...`;
+        try {
+            await onConfirm();
+        } catch (err) {
+            console.error(err);
+        } finally {
+            dismiss();
+        }
+    };
+}
+
 function dismissToast(toast) {
     if (!toast) return;
     toast.classList.add("toast-leaving");
@@ -178,6 +235,7 @@ const analysisTableBody = document.getElementById("analysis-table-body");
 const currentSpaceTitle = document.getElementById("current-space-title");
 const currentSpaceDesc = document.getElementById("current-space-desc");
 const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("file-input");
 
 // 弹窗元素
 const spaceModal = document.getElementById("space-modal");
@@ -193,16 +251,7 @@ const sheetClose = document.getElementById("sheet-close");
 const btnHilCancel = document.getElementById("btn-hil-cancel");
 const btnHilSubmit = document.getElementById("btn-hil-submit");
 const evidenceContainer = document.getElementById("evidence-container");
-
-// BQCA 智脑浮窗
-const bqcaWidget = document.getElementById("bqca-widget");
-const bqcaToggle = document.getElementById("bqca-toggle");
-const bqcaChatBox = document.getElementById("bqca-chat-box");
-const chatCloseBtn = document.getElementById("chat-close-btn");
-const bqcaInput = document.getElementById("bqca-input");
-const btnSendChat = document.getElementById("btn-send-chat");
-const bqcaMessages = document.getElementById("bqca-messages");
-
+const historyTableBody = document.getElementById("history-table-body");
 // =========================================================================
 // 4. 初始化加载：空间与本地配置缓存 (LocalStorage Caching)
 // =========================================================================
@@ -249,12 +298,224 @@ function renderTemplatesUI() {
     tabTriggers.innerHTML = "";
     tabContents.innerHTML = "";
 
+    // 💡 官方精调原厂 Prompts 预设
+    const DEFAULT_OFFICIAL_PROMPTS = {
+        contract: `你是一位极其严谨的资深“采购与法务审计专家”。请仔细审阅这份合同。
+你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "合同主标题",
+  "parties": ["采购方(甲方)企业全称", "销售方(乙方)企业全称"],
+  "key_dates": {
+    "合同签署日期": "YYYY-MM-DD",
+    "合同截止日期": "YYYY-MM-DD"
+  },
+  "amount": 100000.00,
+  "currency": "CNY",
+  "summary": "关于该采购合同的核心履约责任、采购标的物与交付要求的精简总结",
+  "dynamic_attributes": {
+    "交货期限": "最晚交货期限或工程完工节点约定",
+    "质保期限": "售后质保与硬件保修期限约定",
+    "付款方式": "合同款项分期结算与付款要求约定"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "合同文本中关于主标题判定的原文依据段落与条款原句",
+    "parties": "合同文本中签署双方甲乙企业名称判定的原文依据条款原句",
+    "key_dates": "合同签署与截止期限判定的原文依据条款原句",
+    "amount": "确定合同交易总金额判定的原文依据条款原句",
+    "currency": "确定计价币种判定的原文依据条款原句",
+    "summary": "确定合同总结信息的原文判定依据",
+    "交货期限": "确定交货期约定的原文条款段落依据",
+    "质保期限": "确定质保期约定的原文条款段落依据",
+    "付款方式": "确定付款方式约定的原文条款段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据第三条第1款：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。`,
+
+        resume: `你是一位极其严谨的资深“猎头招聘与人才审计专家”。请仔细审阅这份候选人求职简历。
+你的任务是精确提取人才的核心资历，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "候选人求职简历标准标题",
+  "parties": ["候选人姓名", "最近任职公司或毕业院校名称"],
+  "key_dates": {
+    "最近任职开始时间": "YYYY-MM-DD",
+    "最近任职结束时间": "YYYY-MM-DD"
+  },
+  "amount": null,
+  "currency": "CNY",
+  "summary": "对该候选人专业技术背景、项目亮点与岗位匹配度的客观评价总结",
+  "dynamic_attributes": {
+    "求职岗位": "候选人求职或最近一段履历的岗位名称",
+    "核心技术栈": "候选人最擅长且具备深度实战经验的核心技术体系",
+    "工作年限": "候选人从第一份工作起算的总工作资历时长"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "简历文本中关于候选人主标题判定的原文依据段落原句",
+    "parties": "简历文本中确定姓名、就职单位判定的原文依据段落原句",
+    "key_dates": "简历中最近任职起止期限判定的原文依据条款原句",
+    "amount": "确定期望薪资或财务属性的原文依据段落（若无请写“无”）",
+    "currency": "确定期望薪资币种判定的原文依据段落（若无请写“无”）",
+    "summary": "确定总结信息的原文判定依据",
+    "求职岗位": "确定期望岗位的原文段落依据",
+    "核心技术栈": "确定擅长技术栈的原文段落依据",
+    "工作年限": "确定工作年限判定的原文段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据简历第几段：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。`,
+
+        invoice: `你是一位极其严谨的资深“出纳审计与财务税务合规专家”。请仔细审阅这份发票凭证。
+你的任务是精确提取发票的核对条款，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "发票标准标题",
+  "parties": ["销售方(开票单位)企业全称", "购买方(受票单位)企业全称"],
+  "key_dates": {
+    "开票日期": "YYYY-MM-DD"
+  },
+  "amount": 10000.00,
+  "currency": "CNY",
+  "summary": "发票所开具的主营服务、商品类别及税率明细简述",
+  "dynamic_attributes": {
+    "发票号码": "发票票面上唯一的识别开票代码",
+    "发票税率": "财务税控核账的法定开票税率"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "发票票面上标题判定的原文依据",
+    "parties": "销售方与购买方企业名称判定的原文票面依据原句",
+    "key_dates": "发票开具日期判定的原文票面依据原句",
+    "amount": "确定发票含税总金额判定的原文票面依据原句",
+    "currency": "确定发票计价币种判定的原文票面依据原句",
+    "summary": "确定发票服务明细内容的原文判定依据",
+    "发票号码": "确定发票号码判定的原文票面依据原句",
+    "发票税率": "确定开票税率判定的原文票面依据原句"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据发票右上方：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。`,
+
+        other: `你是一位极其严谨的资深“商业综合文档审计专家”。请仔细审阅这份综合性文档。
+你的任务是精确提取文档的核心商业情报，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "文档主标题",
+  "parties": ["文档提及的核心主体或公司名称列表"],
+  "key_dates": {
+    "关键时间时点": "YYYY-MM-DD"
+  },
+  "amount": null,
+  "currency": "CNY",
+  "summary": "对该综合文档一句话中文核心内容总结",
+  "dynamic_attributes": {
+    "文档分类描述": "大模型判定该文档的物理公约数分类属性",
+    "核心结论": "文档中提炼出的对企业决策最关键的结论"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "文档文本中确定标题的原文依据段落",
+    "parties": "文档中关于提及主体判定的原文依据段落",
+    "key_dates": "文档中关键时间判定的原文依据段落",
+    "amount": "文档中涉及的合同/交易金额依据（若无请写“无”）",
+    "currency": "文档中涉及的计价币种依据（若无请写“无”）",
+    "summary": "摘要提炼得出的原文段落依据",
+    "文档分类描述": "确定文档属性分类的原文依据",
+    "核心结论": "确定核心结论的原文段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据文档第几段：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。`
+    };
+
+    // 💡 官方精调物理大数仓 11 核心大统一主列 Schema 看板 (真正落实首长的大平盘大一统、防误导架构)
+    const SCHEMA_GUIDANCE_MAP = {
+        contract: {
+            title: "📜 采购法务合同 ── 物理数仓 11 核心黄金主列大平层规范",
+            color: "rgba(116, 185, 255, 0.04)",
+            border: "rgba(116, 185, 255, 0.4)",
+            accent: "#74b9ff",
+            fields: [
+                { name: "doc_title", desc: "合同主标题 (STRING)" },
+                { name: "parties", desc: "签署双方/买卖主体 JSON 数组，如：['甲方', '乙方']" },
+                { name: "key_dates", desc: "签署日期、截止日期 JSON 键值对" },
+                { name: "amount", desc: "合同总金额，物理数值型 (FLOAT64)，数仓支持直接 SUM/AVG" },
+                { name: "currency", desc: "币种简写（如 CNY, USD）" },
+                { name: "summary", desc: "大模型总结的合同履约责任核心摘要" },
+                { name: "dynamic_attributes", desc: "特定独有属性（如交期、质保年限），全自动合拢塞入 JSON 动态大口袋" },
+                { name: "evidence", desc: "<b>【灵魂证据链】</b>包含上述各字段在合同原文中的一字不漏依据原文 JSON" },
+                { name: "confidence_score", desc: "置信度评估（high / medium / low）" }
+            ],
+            tip: "💡 <b>法务场景业务导流提示：</b> 提取的合同 <code>amount</code> 会自动对齐在 BigQuery 物理表主数值列上。大模型会将 <code>delivery_deadline</code> (交期)、<code>warranty_years</code> (质保期) 自动合拢塞入 <code>dynamic_attributes</code> 动态大口袋中，不污染主列架构！"
+        },
+        resume: {
+            title: "💼 猎头简历专家 ── 物理数仓 11 核心黄金主列大平层规范",
+            color: "rgba(162, 155, 254, 0.04)",
+            border: "rgba(162, 155, 254, 0.4)",
+            accent: "#a29bfe",
+            fields: [
+                { name: "doc_title", desc: "简历标准名称，格式如：'姓名_求职简历' (STRING)" },
+                { name: "parties", desc: "候选人名称、最近任职公司 JSON 数组" },
+                { name: "key_dates", desc: "最近入职时间等关键时点 JSON" },
+                { name: "amount", desc: "通常为 null 或是期望薪资浮点数 (FLOAT64)" },
+                { name: "currency", desc: "币种简写（如 CNY）" },
+                { name: "summary", desc: "大模型对该候选人的专业背景评价与亮点总结" },
+                { name: "dynamic_attributes", desc: "求职岗位 <code>job_title</code>、核心技术栈 <code>skills</code>，合拢塞入 JSON 动态大口袋" },
+                { name: "evidence", desc: "<b>【灵魂证据链】</b>候选人就职履历、学历、项目真实判定来源原文依据 JSON" },
+                { name: "confidence_score", desc: "置信度评估（high / medium / low）" }
+            ],
+            tip: "💡 <b>招聘场景业务导流提示：</b> 猎头评估不设大额账目交易，因此 <code>amount</code> 物理列将默认为 <code>null</code>；而 <code>job_title</code>、<code>skills</code> 等特有信息则自动塞入 <code>dynamic_attributes</code> 动态列，保持底层物理单表极简！"
+        },
+        invoice: {
+            title: "🧾 发票财务核对 ── 物理数仓 11 核心黄金主列大平层规范",
+            color: "rgba(16, 185, 129, 0.04)",
+            border: "rgba(16, 185, 129, 0.4)",
+            accent: "#10b981",
+            fields: [
+                { name: "doc_title", desc: "发票名称及销售方企业 (STRING)" },
+                { name: "parties", desc: "财务交易双方数组，如：['销售方', '购买方']" },
+                { name: "key_dates", desc: "开票日期等关键时间 JSON" },
+                { name: "amount", desc: "发票含税总金额，物理数值型 (FLOAT64)，核账对账的唯一真相" },
+                { name: "currency", desc: "币种简写（如 CNY）" },
+                { name: "summary", desc: "开票服务或所采购产品细目大模型精简摘要" },
+                { name: "dynamic_attributes", desc: "特有属性（发票号码 <code>invoice_code</code>、税率 <code>tax_rate</code>），打包塞入动态大口袋" },
+                { name: "evidence", desc: "<b>【灵魂证据链】</b>发票金额、税率、开票主体在发票 PDF 中的判定依据原文 JSON" },
+                { name: "confidence_score", desc: "置信度评估（high / medium / low）" }
+            ],
+            tip: "💡 <b>发票场景业务导流提示：</b> 强烈建议大模型输出纯数字格式的 <code>amount</code> (例如 <code>5000.00</code>)。<code>invoice_code</code>、<code>tax_rate</code> 将自动并入 <code>dynamic_attributes</code> 中。<code>evidence</code> 必须精准映射发票上的财务明细！"
+        },
+        other: {
+            title: "📂 通用综合文档 ── 物理数仓 11 核心黄金主列大平层规范",
+            color: "rgba(245, 158, 11, 0.04)",
+            border: "rgba(245, 158, 11, 0.4)",
+            accent: "#f59e0b",
+            fields: [
+                { name: "doc_title", desc: "文档主标题 (STRING)" },
+                { name: "parties", desc: "文档中提及的核心主体或公司数组" },
+                { name: "key_dates", desc: "文档提及的关键时点 JSON" },
+                { name: "amount", desc: "通常为 null 或者是提及的合同/交易金额" },
+                { name: "currency", desc: "币种简写（如 CNY）" },
+                { name: "summary", desc: "大模型总结的文档一句话中文核心内容摘要" },
+                { name: "dynamic_attributes", desc: "异构多模态特定自适应提炼属性键值对" },
+                { name: "evidence", desc: "<b>【灵魂证据链】</b>提取的标题、主体、摘要在文档原文中对应的依据段落 JSON" },
+                { name: "confidence_score", desc: "置信度评估（high / medium / low）" }
+            ],
+            tip: "💡 <b>通用场景业务导流提示：</b> 这是大公约数兜底分类，将自动保留统一 11 物理黄金主列（包括 <code>evidence</code>），让 BQCA 智脑牢牢锁定单表，彻底消除多表跨表关联带来的性能和语义幻觉！"
+        }
+    };
+
     // 🚀 【极致洁癖纯净化】：完全遵照用户指令下线阶段一自动分类器卡片，100% 走纯靶向专家卡片提取
     const allTemplates = [...loadedTemplates];
 
     allTemplates.forEach((t, idx) => {
         const btn = document.createElement("button");
-        // 判定当前选中的 Active Tab
         const isSelected = t.category === currentActiveCategory;
         btn.className = `sec-btn ${isSelected ? "active" : ""}`;
         btn.innerHTML = `<i class="fa-solid fa-brain" style="font-size: 10px; opacity: 0.8; margin-right: 4px;"></i> ${t.display_name}`;
@@ -286,6 +547,63 @@ function renderTemplatesUI() {
         }
 
         // =========================================================================
+        // 💡 方案一：并网 Schema 规范智能提示区 (Schema Guidance Box)
+        // =========================================================================
+        const schemaGuide = SCHEMA_GUIDANCE_MAP[t.category];
+        const guideDiv = document.createElement("div");
+        
+        if (schemaGuide) {
+            guideDiv.className = "schema-guide-card";
+            guideDiv.style.background = schemaGuide.color;
+            guideDiv.style.border = `1px solid ${schemaGuide.border}`;
+            guideDiv.style.borderRadius = "8px";
+            guideDiv.style.padding = "14px";
+            guideDiv.style.marginTop = "10px";
+            guideDiv.style.marginBottom = "10px";
+            
+            let fieldsHtml = "";
+            schemaGuide.fields.forEach(f => {
+                fieldsHtml += `
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:11px;">
+                        <span style="background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius:4px; color: ${schemaGuide.accent}; font-family:monospace; font-weight:600;">${f.name}</span>
+                        <span style="color: var(--text-muted);">${f.desc}</span>
+                    </div>
+                `;
+            });
+
+            guideDiv.innerHTML = `
+                <div style="font-size:12px; font-weight:700; color: #fff; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                    <i class="fa-regular fa-lightbulb" style="color: ${schemaGuide.accent}; font-size:14px;"></i>
+                    <span>${schemaGuide.title}</span>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:x-12px; margin-bottom:10px;">
+                    ${fieldsHtml}
+                </div>
+                <div style="font-size:11px; color: var(--text-muted); border-top: 1px dashed rgba(255,255,255,0.06); padding-top:8px; line-height:1.4;">
+                    ${schemaGuide.tip}
+                </div>
+            `;
+        } else if (t.category !== "auto") {
+            // 自定义新增分类的提示
+            guideDiv.className = "schema-guide-card";
+            guideDiv.style.background = "rgba(255,255,255,0.02)";
+            guideDiv.style.border = "1px dashed var(--border-color)";
+            guideDiv.style.borderRadius = "8px";
+            guideDiv.style.padding = "12px";
+            guideDiv.style.marginTop = "10px";
+            guideDiv.style.marginBottom = "10px";
+            guideDiv.innerHTML = `
+                <div style="font-size:12px; font-weight:700; color: #fff; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                    <i class="fa-solid fa-code" style="color: #64ffda; font-size:13px;"></i>
+                    <span>✨ 自定义大平层提取 物理数仓 Schema 提示</span>
+                </div>
+                <p style="font-size:11px; color:var(--text-muted); line-height:1.4; margin:0;">
+                    系统支持热插拔、高弹性自定义分类。为了与 BigQuery 历史黄金大表和 BQCA 智脑完美融和，请确保您的自定义 Prompt 输出的 JSON 中至少包含：<code>doc_title</code> (标题)、<code>parties</code> (签署相关主体) 以及 <code>summary</code> (中文内容总结)。其他特定业务属性将全自动塞入 dynamic_attributes 大平层。
+                </p>
+            `;
+        }
+
+        // =========================================================================
         // 🎛️ 模型高级超参数配置区 (MIME Type / Temperature / Top P / Max Tokens)
         // =========================================================================
         const hpDiv = document.createElement("div");
@@ -300,7 +618,6 @@ function renderTemplatesUI() {
         hpDiv.style.gap = "16px";
 
         if (t.category === "auto") {
-            // Auto 状态下显示高端分发提示，替代滑块超参
             hpDiv.style.gridTemplateColumns = "1fr";
             hpDiv.innerHTML = `
                 <div style="font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; line-height: 1.5; padding: 4px;">
@@ -425,6 +742,31 @@ function renderTemplatesUI() {
                 saveBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> 保存模板修改`;
             };
             ctrlDiv.appendChild(saveBtn);
+
+            // =========================================================================
+            // 💡 方案一：新增一键恢复原厂 Prompt 气囊 (Official Reset Button)
+            // =========================================================================
+            const officialPrompt = DEFAULT_OFFICIAL_PROMPTS[t.category];
+            if (officialPrompt) {
+                const resetBtn = document.createElement("button");
+                resetBtn.className = "sec-btn";
+                resetBtn.style.borderColor = "#10b981";
+                resetBtn.style.color = "#10b981";
+                resetBtn.style.marginLeft = "10px";
+                resetBtn.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> 恢复官方原厂 Prompt`;
+                resetBtn.onclick = () => {
+                    showConfirmDialog(
+                        "恢复官方原厂 Prompt",
+                        `确定要将 "${t.display_name}" 分类的提示词恢复为 Google 官方精密预设吗？您做出的自定义修改将被覆盖。`,
+                        () => {
+                            textarea.value = officialPrompt.trim();
+                            showToast("已热加载官方预设", "官方 Prompt 模板已成功反填至文本框 ── <b>请注意：您需要点击「保存模板修改」按钮以将其存入数据库生效！</b>", "info");
+                        }
+                    );
+                };
+                // 挂载在保存按钮右侧
+                ctrlDiv.appendChild(resetBtn);
+            }
             
             // 允许删除非系统内置核心分类
             if (!["contract", "resume", "invoice", "other"].includes(t.category)) {
@@ -433,22 +775,29 @@ function renderTemplatesUI() {
                 delBtn.style.borderColor = "var(--accent-pink)";
                 delBtn.style.color = "var(--accent-pink)";
                 delBtn.innerHTML = `<i class="fa-solid fa-trash-can"></i> 删除此分类`;
-                delBtn.onclick = async () => {
-                    if (confirm(`确定要物理删除 "${t.display_name}" 分类模板吗？这将从数仓逻辑中彻底移除该路由！`)) {
-                        const success = await deleteTemplateFromBackend(t.category);
-                        if (success) {
-                            showToast("删除分类成功", `分类模板 <strong>${t.display_name}</strong> 已安全移除。`, "success");
-                            await fetchTemplates();
-                        } else {
-                            showToast("删除分类失败", "删除分类模板失败！", "error");
+                delBtn.onclick = () => {
+                    showConfirmDialog(
+                        "物理删除分类模板",
+                        `确定要物理删除 "${t.display_name}" 分类模板吗？这将从数仓逻辑中彻底移除该路由！`,
+                        async () => {
+                            const success = await deleteTemplateFromBackend(t.category);
+                            if (success) {
+                                showToast("删除分类成功", `分类模板 <strong>${t.display_name}</strong> 已安全移除。`, "success");
+                                await fetchTemplates();
+                            } else {
+                                showToast("删除分类失败", "删除分类模板失败！", "error");
+                            }
                         }
-                    }
+                    );
                 };
                 ctrlDiv.appendChild(delBtn);
             }
         }
         
         div.appendChild(textarea);
+        if (t.category !== "auto") {
+            div.appendChild(guideDiv); // 提示卡片面板完美插入
+        }
         div.appendChild(hpDiv);
         div.appendChild(ctrlDiv);
         tabContents.appendChild(div);
@@ -569,7 +918,10 @@ function injectConfigPanelToHeader() {
                     </div>
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">💡 BQCA 智能体绑定 ID (GCP Agent ID)</label>
-                        <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: agent_55fb1617...">
+                        <div style="font-size:11px; color:#f59e0b; margin-bottom:4px; padding:4px 8px; background:rgba(245,158,11,0.1); border-radius:4px; border:1px solid rgba(245,158,11,0.3);">
+                            ⚠️ 仅支持 global 区域的代理，其他区域暂不支持自动绑定
+                        </div>
+                        <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: ecommerce-analyst-cn (仅 global 区域)">
                     </div>
                 </div>
 
@@ -593,28 +945,65 @@ function injectConfigPanelToHeader() {
     // 注入自定义分类 Modal
     const templateModalHtml = `
         <div class="modal-overlay hidden" id="template-modal">
-            <div class="modal-card" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h3><i class="fa-solid fa-plus"></i> 新增自定义分类模板</h3>
-                    <button class="close-btn" id="template-modal-close"><i class="fa-solid fa-xmark"></i></button>
+            <div class="modal-card" style="max-width: 460px; background: #0b0c16; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 12px 40px rgba(0,0,0,0.6); border-radius: 12px;">
+                <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding: 18px 20px;">
+                    <h3 style="margin:0; font-size:15px; color:#fff; display:flex; align-items:center; gap:8px; font-weight: 700;">
+                        <i class="fa-solid fa-wand-magic-sparkles" style="color: #64ffda;"></i> ➕ 智能新增场景提取分类
+                    </h3>
+                    <button class="close-btn" id="template-modal-close" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:16px;"><i class="fa-solid fa-xmark"></i></button>
                 </div>
-                <div class="modal-body">
-                    <div class="form-group" style="margin-bottom: 16px;">
-                        <label>分类 Key (英文小写，唯一标识)</label>
-                        <input type="text" id="input-tpl-key" placeholder="例如: patent" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%;">
+                <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 18px;">
+                    
+                    <!-- 1. 分类展示名称 (全中文语义) -->
+                    <div class="form-group">
+                        <label style="display:block; font-size:12px; font-weight:600; color:#fff; margin-bottom:8px; display:flex; align-items:center; gap:4px;">
+                            <span style="color:#64ffda;">*</span> 新增分类名称 (中文)
+                        </label>
+                        <input type="text" id="input-tpl-name" placeholder="例如: 专利文件、工程周报、诊断报告" style="background:#0f1124; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:11px 14px; border-radius:8px; width:100%; font-size:12.5px; outline:none; transition: border 0.2s;">
                     </div>
-                    <div class="form-group" style="margin-bottom: 16px;">
-                        <label>分类名称 (中文名称)</label>
-                        <input type="text" id="input-tpl-name" placeholder="例如: 专利技术专家" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%;">
+
+                    <!-- 2. 精美业务勾选清单 (纯业务中文语义，屏蔽数据库术语) -->
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); padding: 14px; border-radius: 8px;">
+                        <label style="display:block; font-size:12px; font-weight:600; color:#64ffda; margin-bottom:10px; display:flex; align-items:center; gap:6px;">
+                            <i class="fa-solid fa-list-check"></i> 标配核心信息抽取 (系统已智能静默处理)
+                        </label>
+                        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 11.5px; color: var(--text-muted); margin-bottom: 12px; border-bottom: 1px dashed rgba(255,255,255,0.06); padding-bottom: 10px;">
+                            <div style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-circle-check" style="color: #2ecc71;"></i> 文档主标题</div>
+                            <div style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-circle-check" style="color: #2ecc71;"></i> 提及的关键参与主体与企业</div>
+                            <div style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-circle-check" style="color: #2ecc71;"></i> 中文核心内容总结</div>
+                            <div style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-circle-check" style="color: #2ecc71;"></i> <b>高保真原文审计比对证据链依据</b></div>
+                        </div>
+
+                        <!-- 业务可选勾选 -->
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select:none;">
+                                <input type="checkbox" id="input-tpl-has-amount" checked style="accent-color: #64ffda; width:14px; height:14px;">
+                                <span>此文档涉及交易金额、财务款项等数值</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #fff; cursor: pointer; user-select:none;">
+                                <input type="checkbox" id="input-tpl-has-date" checked style="accent-color: #64ffda; width:14px; height:14px;">
+                                <span>此文档涉及关键起止、开票或履约日期</span>
+                            </label>
+                        </div>
                     </div>
-                    <div class="form-group" style="margin-bottom: 16px;">
-                        <label>专属结构化 JSON 提示词模版 (Prompt Template)</label>
-                        <textarea id="input-tpl-prompt" rows="6" placeholder="请在这里编写你的专属大模型 JSON 提取提示词，必须指定输出标准的纯 JSON 格式..." style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:12px; border-radius:8px; width:100%; font-family:monospace; font-size:12px;"></textarea>
+
+                    <!-- 3. 自定义专科字段极简输入区 (填表隔开体验) -->
+                    <div class="form-group">
+                        <label style="display:block; font-size:12px; font-weight:600; color:#fff; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                            <i class="fa-solid fa-cubes" style="color: #a29bfe;"></i> 场景专属特有属性 (如有，请用逗号隔开)
+                        </label>
+                        <input type="text" id="input-tpl-customs" placeholder="例如: 专利号, 发明人, 申请单位" style="background:#0f1124; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:11px 14px; border-radius:8px; width:100%; font-size:12px; outline:none;">
+                        <p style="font-size: 10.5px; color: var(--text-muted); margin: 6px 0 0 0; line-height: 1.4;">
+                            💡 提示：输入您想要大模型定向提取的专属属性，系统将<b>自动进行智脑翻译与装配</b>，自动合拢入库并生成其对应的原文判定证据链！
+                        </p>
                     </div>
+
                 </div>
-                <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px;">
-                    <button class="sec-btn" id="btn-cancel-tpl">取消</button>
-                    <button class="sparkle-btn" id="btn-save-tpl" style="padding:10px 20px;">确认添加并保存</button>
+                <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.06); padding: 14px 20px; display:flex; justify-content:flex-end; gap:12px; background: rgba(0,0,0,0.15); border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;">
+                    <button class="sec-btn" id="btn-cancel-tpl" style="font-size: 12px; padding: 8px 16px; border-radius:6px;">取消</button>
+                    <button class="sparkle-btn" id="btn-save-tpl" style="font-size: 12px; padding:8px 22px; background: linear-gradient(135deg, #64ffda, #10b981); border:none; color:#0b0c16; border-radius:6px; cursor:pointer; font-weight:700; display:flex; align-items:center; gap:4px;">
+                        <i class="fa-solid fa-bolt"></i> 智能装配并落库
+                    </button>
                 </div>
             </div>
         </div>
@@ -805,34 +1194,87 @@ function injectConfigPanelToHeader() {
 
     // 绑定分类 Modal 事件
     const templateModal = document.getElementById("template-modal");
-    document.getElementById("template-modal-close").onclick = () => templateModal.classList.add("hidden");
-    document.getElementById("btn-cancel-tpl").onclick = () => templateModal.classList.add("hidden");
+    document.getElementById("template-modal-close").onclick = () => {
+        templateModal.classList.add("hidden");
+        document.getElementById("custom-fields-container").innerHTML = "";
+    };
+    document.getElementById("btn-cancel-tpl").onclick = () => {
+        templateModal.classList.add("hidden");
+        document.getElementById("custom-fields-container").innerHTML = "";
+    };
 
-    document.getElementById("btn-save-tpl").onclick = async () => {
-        const key = document.getElementById("input-tpl-key").value.trim().toLowerCase();
+    // 💡 智能一键自动装配与落库
+    document.getElementById("btn-save-tpl").onclick = async (e) => {
+        e.preventDefault();
         const name = document.getElementById("input-tpl-name").value.trim();
-        const prompt = document.getElementById("input-tpl-prompt").value.trim();
 
-        if (!key || !name || !prompt) {
-            showToast("输入校验", "请完整填写分类 Key、名称和提示词！", "warning");
-            return;
-        }
-        
-        if (!/^[a-z_]+$/.test(key)) {
-            showToast("Key 校验", "分类 Key 必须为纯英文小写（支持下划线），例如: patent", "warning");
+        if (!name) {
+            showToast("输入提示", "请输入要新增的分类名称（例如：专利文件）！", "warning");
             return;
         }
 
-        const success = await saveTemplateToBackend(key, name, prompt);
+        // 1. 自动生成一个 100% 唯一的后台小写英文 Key (防冲突，彻底屏蔽英文 Key 复杂度)
+        const timestamp = Date.now().toString().slice(-5);
+        const randomStr = Math.floor(Math.random() * 100).toString();
+        const key = "tpl_" + timestamp + "_" + randomStr;
+
+        // 2. 收集用户勾选的业务开关
+        const hasAmount = document.getElementById("input-tpl-has-amount").checked;
+        const hasDate = document.getElementById("input-tpl-has-date").checked;
+
+        // 3. 收集用户在输入框内填写的特有属性列表 (用逗号隔开)
+        const customsInput = document.getElementById("input-tpl-customs").value.trim();
+        const customKeys = customsInput
+            ? customsInput.split(/[,，]/).map(x => x.trim()).filter(x => x.length > 0)
+            : [];
+
+        // 4. 🧠 智脑装配器：全中文业务语义，大模型直觉理解率 100%，且 BQ JSON 完全兼容中文 Key！
+        let dynamicAttrObj = {};
+        let customEvidencesHtml = "";
+        customKeys.forEach(attr => {
+            dynamicAttrObj[attr] = `提取文档中提及的${attr}内容`;
+            customEvidencesHtml += `\n    "${attr}": "确定${attr}的原文条款段落与依据原句",`;
+        });
+
+        // 金额与日期控制
+        const amountLine = hasAmount ? `  "amount": 10000.00,\n  "currency": "CNY",` : `  "amount": null,\n  "currency": "CNY",`;
+        const amountEvidenceLine = hasAmount ? `\n    "amount": "确定交易/财务金额的原文依据条款原句",\n    "currency": "确定计价货币的原文依据条款原句",` : "";
+
+        const dateLine = hasDate ? `  "key_dates": {\n    "关键日期项名称": "YYYY-MM-DD"\n  },` : `  "key_dates": {},\n`;
+        const dateEvidenceLine = hasDate ? `\n    "key_dates": "确定关联关键日期的原文依据原句",` : "";
+
+        const assembledPrompt = `你是一位极其严谨的资深“${name}”分析与审核专家。请仔细审阅这份文件。
+你的任务是精确提取文件的核心信息，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "文件主标题",
+  "parties": ["相关主体/提及的企业或人名"],
+  ${dateLine}
+  ${amountLine}
+  "summary": "关于本篇${name}的核心内容一句话精简摘要（100字内）",
+  "dynamic_attributes": ${JSON.stringify(dynamicAttrObj, null, 2).split('\n').map((line, i) => i === 0 ? line : '  ' + line).join('\n')},
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "确定文档标题的原文段落依据",
+    "parties": "确定相关关键主体的原文依据原句",${dateEvidenceLine}${amountEvidenceLine}${customEvidencesHtml}
+    "summary": "确定核心摘要或内容的原文依据原句"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应段落（例如：“根据第几段：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。`;
+
+        // 5. 提交后端落库
+        const success = await saveTemplateToBackend(key, name, assembledPrompt);
         if (success) {
-            showToast("添加分类成功", `已成功将自定义分类 <strong>${name}</strong> 注册并持久化落库！`, "success");
+            showToast("智能装配成功", `已成功自动智能装配并保存新分类：<strong>${name}</strong>！`, "success");
             templateModal.classList.add("hidden");
-            document.getElementById("input-tpl-key").value = "";
+            // 重置输入框
             document.getElementById("input-tpl-name").value = "";
-            document.getElementById("input-tpl-prompt").value = "";
+            document.getElementById("input-tpl-customs").value = "";
             await fetchTemplates();
         } else {
-            showToast("添加分类失败", "保存分类至后台数据库失败！", "error");
+            showToast("一键添加失败", "保存分类模板至后台数据库失败！", "error");
         }
     };
 }
@@ -932,7 +1374,7 @@ function selectWorkspace(id, name) {
 
     // 启用上传区域
     dropzone.classList.remove("disabled");
-    btnTriggerAnalyze.disabled = false;
+    btnTriggerAnalyze.disabled = true;
 
     // 拉取该空间下的上传文件和分析结果
     fetchFileList();
@@ -985,8 +1427,29 @@ btnConfirmCreate.onclick = async () => {
 };
 
 // -------------------------------------------------------------------------
-// 7. GCS Signed URL 网盘拖拽上传 Workflow
+// 7. GCS Signed URL 网盘拖拽上传/点击唤起双轨 Workflow
 // -------------------------------------------------------------------------
+// 💡 【物理唤起大国重器】支持直接点击拖拽区域，无缝唤起本地文件系统选择框进行直传
+dropzone.onclick = () => {
+    if (!dropzone.classList.contains("disabled")) {
+        fileInput.click();
+    }
+};
+
+fileInput.onchange = async () => {
+    if (dropzone.classList.contains("disabled") || !currentWorkspace) return;
+    
+    const files = fileInput.files;
+    if (files.length === 0) return;
+
+    for (let file of files) {
+        await uploadFileToGCS(file);
+    }
+    
+    // 清空选择，确保下一次选择同一个文件能 100% 触发 change 直传
+    fileInput.value = "";
+};
+
 dropzone.addEventListener("dragover", (e) => {
     e.preventDefault();
     if (!dropzone.classList.contains("disabled")) {
@@ -1083,6 +1546,9 @@ async function fetchFileList() {
         netdiskFileList.innerHTML = "";
 
         if (result.success && result.data.length > 0) {
+            // 💡 防呆保护：空间中检测到存在上传好的文件，立刻活化分析按钮
+            btnTriggerAnalyze.disabled = false;
+            
             result.data.forEach(f => {
                 const li = document.createElement("li");
                 li.className = "file-item";
@@ -1116,9 +1582,12 @@ async function fetchFileList() {
                 netdiskFileList.appendChild(li);
             });
         } else {
+            // 💡 防呆保护：空间中暂无任何可分析文件，无条件禁用一键分析大按钮，杜绝盲目误触
+            btnTriggerAnalyze.disabled = true;
             netdiskFileList.innerHTML = `<li class="empty-list-hint">空间内暂无上传文件</li>`;
         }
     } catch (e) {
+        btnTriggerAnalyze.disabled = true;
         console.error(e);
     }
 }
@@ -1243,7 +1712,14 @@ async function fetchAnalysisResults() {
 }
 
 function renderAnalysisTable() {
+    // 1. 清空上层待审核、下层已审核历史两个 tbody
     analysisTableBody.innerHTML = "";
+    historyTableBody.innerHTML = "";
+
+    let pendingCount = 0;
+    let approvedCount = 0;
+
+    // 2. 遍历整个 analysisResults 数据源，做物理双轨重绘
     analysisResults.forEach((row, index) => {
         const tr = document.createElement("tr");
         
@@ -1258,24 +1734,68 @@ function renderAnalysisTable() {
         // 置信度 Badge
         const confClass = `confidence-${row.confidence_score}`;
 
-        tr.innerHTML = `
-            <td><span class="badge badge-bq">${row.doc_type.toUpperCase()}</span></td>
-            <td style="font-weight: 500; color: #fff;">${row.doc_title}</td>
-            <td style="font-family: monospace; color: var(--accent-pink);">${moneyDisplay}</td>
-            <td>
-                <span class="status-pill ${statusClass}">
-                    <i class="fa-solid ${statusIcon}"></i> ${statusText}
-                </span>
-            </td>
-            <td><span class="confidence-badge ${confClass}">${row.confidence_score.toUpperCase()}</span></td>
-            <td>
-                <button class="primary-btn" style="padding: 6px 12px; font-size: 11px;" onclick="openHumanReview(${index})">
-                    <i class="fa-solid fa-user-shield"></i> 核对并通过
-                </button>
-            </td>
-        `;
-        analysisTableBody.appendChild(tr);
+        if (row.parse_status !== "approved") {
+            // 🚨 【待审核队列 (Pending)】
+            pendingCount++;
+            tr.innerHTML = `
+                <td><span class="badge badge-bq">${row.doc_type.toUpperCase()}</span></td>
+                <td style="font-weight: 500; color: #fff;">${row.doc_title}</td>
+                <td style="font-family: monospace; color: var(--accent-pink);">${moneyDisplay}</td>
+                <td>
+                    <span class="status-pill ${statusClass}">
+                        <i class="fa-solid ${statusIcon}"></i> ${statusText}
+                    </span>
+                </td>
+                <td><span class="confidence-badge ${confClass}">${row.confidence_score.toUpperCase()}</span></td>
+                <td>
+                    <button class="primary-btn" style="padding: 6px 12px; font-size: 11px;" onclick="openHumanReview(${index})">
+                        <i class="fa-solid fa-user-shield"></i> 核对并通过
+                    </button>
+                </td>
+            `;
+            analysisTableBody.appendChild(tr);
+        } else {
+            // 🚨 【已审核黄金物理大表 (Approved Historical)】
+            approvedCount++;
+            tr.innerHTML = `
+                <td><span class="badge badge-bq" style="background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #10b981;">${row.doc_type.toUpperCase()}</span></td>
+                <td style="font-weight: 500; color: rgba(255,255,255,0.65); text-decoration: line-through; text-decoration-color: rgba(16,185,129,0.2);">${row.doc_title}</td>
+                <td style="font-family: monospace; color: #10b981;">${moneyDisplay}</td>
+                <td>
+                    <span class="status-pill ${statusClass}" style="background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2);">
+                        <i class="fa-solid ${statusIcon}"></i> 已物理归档
+                    </span>
+                </td>
+                <td><span class="confidence-badge ${confClass}">${row.confidence_score.toUpperCase()}</span></td>
+                <td>
+                    <button class="primary-btn" style="padding: 6px 12px; font-size: 11px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);" onclick="openHumanReview(${index})">
+                        <i class="fa-solid fa-magnifying-glass"></i> 查阅
+                    </button>
+                </td>
+            `;
+            historyTableBody.appendChild(tr);
+        }
     });
+
+    // 3. 空值兜底占位提示
+    if (pendingCount === 0) {
+        analysisTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="table-empty-hint" style="color: #10b981; background: rgba(16,185,129,0.02); border: 1px dashed rgba(16,185,129,0.15); padding: 24px;">
+                    <i class="fa-solid fa-circle-check"></i> 当前空间内所有上传文件均已完成大模型提取并精准落库，物理待核对队列已全部清空！
+                </td>
+            </tr>
+        `;
+    }
+    if (approvedCount === 0) {
+        historyTableBody.innerHTML = `
+            <tr>
+                <td colspan="6" class="table-empty-hint" style="padding: 24px;">
+                    当前空间暂无已审核归档记录，请点击上方“待审核”文件中的【核对并通过】完成首单物理归档。
+                </td>
+            </tr>
+        `;
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -1396,6 +1916,36 @@ window.openHumanReview = function(index) {
         evidenceContainer.innerHTML = `<div class="empty-list-hint">大模型该分类未输出具体引用证据。</div>`;
     }
 
+    // 2.5 💡 如果是已审核状态，则将表单及提交按钮置为只读/禁用，确立落库安全规范
+    const isApproved = data.parse_status === "approved";
+    btnHilSubmit.disabled = isApproved;
+    if (isApproved) {
+        btnHilSubmit.innerHTML = `<i class="fa-solid fa-lock"></i> 物理数据已安全落库 (只读查阅)`;
+        btnHilSubmit.style.background = "rgba(255,255,255,0.04)";
+        btnHilSubmit.style.borderColor = "rgba(255,255,255,0.08)";
+        btnHilSubmit.style.color = "rgba(255,255,255,0.4)";
+    } else {
+        btnHilSubmit.innerHTML = `<i class="fa-solid fa-circle-check"></i> 确认无误，精准归档落库`;
+        btnHilSubmit.style.background = ""; 
+        btnHilSubmit.style.borderColor = "";
+        btnHilSubmit.style.color = "";
+    }
+
+    document.getElementById("hil-title").readOnly = isApproved;
+    document.getElementById("hil-parties").readOnly = isApproved;
+    document.getElementById("hil-amount").readOnly = isApproved;
+    document.getElementById("hil-currency").readOnly = isApproved;
+    document.getElementById("hil-summary").readOnly = isApproved;
+
+    const dynInputs = dynFormContainer.querySelectorAll(".dyn-input-field");
+    dynInputs.forEach(input => {
+        input.readOnly = isApproved;
+        if (isApproved) {
+            input.style.background = "rgba(255,255,255,0.02)";
+            input.style.color = "rgba(255,255,255,0.5)";
+        }
+    });
+
     // 3. 打开侧边审核板
     reviewSheet.classList.remove("hidden");
 };
@@ -1438,7 +1988,7 @@ btnHilSubmit.onclick = async () => {
         const result = await res.json();
 
         if (result.success) {
-            showToast("人工核对完成", "系统已在 BigQuery 部署带语义描述的物理结果表，并秒级绑定 BQCA！", "success", 5000);
+            showToast("人工核对完成", "系统已成功在 BigQuery 部署黄金物理结果大表，并秒级完成 GCS 文件冷温物理剪切归档！", "success", 5000);
             
             // 更新本地数据并重绘表格
             analysisResults[currentReviewIndex].doc_title = payload.doc_title;
@@ -1451,9 +2001,9 @@ btnHilSubmit.onclick = async () => {
             
             renderAnalysisTable();
             closeReviewSheet();
-
-            // 智能联动：一键激活并弹出 BQCA 对话挂件！
-            activateBQCAChatWidget();
+            
+            // 💡 秒级全物理联动：落库后文件已在 GCS 端被物理剪切，立即重载左栏云网盘源文件列表，让已被处理的 PDF 瞬间消失
+            fetchFileList();
         } else {
             showToast("绑定物理表失败", result.message, "error");
         }
@@ -1465,82 +2015,4 @@ btnHilSubmit.onclick = async () => {
     }
 };
 
-// -------------------------------------------------------------------------
-// 10. BQCA 智脑悬浮对话 Workflow (BI Natural Language Q&A Panel)
-// -------------------------------------------------------------------------
-function activateBQCAChatWidget() {
-    bqcaWidget.classList.remove("hidden");
-    // 自动弹起聊天面板
-    bqcaChatBox.classList.remove("hidden");
-    bqcaToggle.classList.add("hidden");
-}
 
-bqcaToggle.onclick = () => {
-    bqcaChatBox.classList.remove("hidden");
-    bqcaToggle.classList.add("hidden");
-};
-
-chatCloseBtn.onclick = () => {
-    bqcaChatBox.classList.add("hidden");
-    bqcaToggle.classList.remove("hidden");
-};
-
-btnSendChat.onclick = handleSendChatMessage;
-bqcaInput.onkeydown = (e) => {
-    if (e.key === "Enter") handleSendChatMessage();
-};
-
-function handleSendChatMessage() {
-    const text = bqcaInput.value.trim();
-    if (!text) return;
-
-    // 插入用户气泡
-    appendMessage(text, "msg-user");
-    bqcaInput.value = "";
-
-    // 智能解析提问，给出超有逼格的 SQL 模拟分析应答
-    setTimeout(() => {
-        const botResponse = generateMockBQCAGeminiResponse(text);
-        appendMessage(botResponse, "msg-bot");
-    }, 1200);
-}
-
-function appendMessage(text, className) {
-    const div = document.createElement("div");
-    div.className = `msg ${className}`;
-    div.innerHTML = `<p>${text}</p>`;
-    bqcaMessages.appendChild(div);
-    bqcaMessages.scrollTop = bqcaMessages.scrollHeight;
-}
-
-// 模拟 BQCA 中 Gemini 读取带 OPTIONS descriptions 列描述注释后的“NL-to-SQL”神准应答
-function generateMockBQCAGeminiResponse(query) {
-    const hasAuditWord = query.includes("合同") || query.includes("钱") || query.includes("万") || query.includes("金额");
-    const hasResumeWord = query.includes("简历") || query.includes("工作") || query.includes("年") || query.includes("经验") || query.includes("开发");
-
-    let sqlStr = "";
-    let ansStr = "";
-
-    if (hasAuditWord) {
-        sqlStr = `SELECT doc_title, amount, currency FROM \`workspace_${currentWorkspace}.t_verified_smart_drive\` WHERE amount > 50000;`;
-        ansStr = `🔍 <b>Gemini 翻译 SQL 解析成功！</b><br>
-        我读取了列级 <code>OPTIONS(description)</code>，确定金额字段为 <code>amount</code>，已被人工核对无误。后台自动穿透执行：<br>
-        <pre style="background:#000; padding:6px; font-size:11px; color:#10b981; border-radius:4px; margin:6px 0;">${sqlStr}</pre>
-        发现当前已核对通过的合同中有 <b>1 份金额大于 50,000 元</b>。合同名称为《框架采购服务协议》，核算金额为 100,000.00 CNY。`;
-    } else if (hasResumeWord) {
-        sqlStr = `SELECT doc_title, JSON_VALUE(dynamic_attributes, '$.experience_years') AS exp FROM \`workspace_${currentWorkspace}.t_verified_smart_drive\` WHERE doc_type = 'resume' AND CAST(JSON_VALUE(dynamic_attributes, '$.experience_years') AS INT64) >= 5;`;
-        ansStr = `🔍 <b>Gemini 翻译 SQL 解析成功！</b><br>
-        我读取了 <code>dynamic_attributes</code> 上的语义注释：【包含求职技术栈和工作年限】。后台自动穿透 JSON 运行：<br>
-        <pre style="background:#000; padding:6px; font-size:11px; color:#10b981; border-radius:4px; margin:6px 0;">${sqlStr}</pre>
-        为您找到 <b>1 份</b> 具有 5 年以上开发经验的简历：<br>
-        - 候选人姓名：张三，工作年限：5 年，核心技术：Java, Spring Boot, BigQuery。`;
-    } else {
-        sqlStr = `SELECT doc_title, summary FROM \`workspace_${currentWorkspace}.t_verified_smart_drive\` WHERE parse_status = 'approved';`;
-        ansStr = `🔍 <b>Gemini 通用语义提取成功！</b><br>
-        我读取了元数据注释列描述，自动在已核实通过的数据上执行汇总：<br>
-        <pre style="background:#000; padding:6px; font-size:11px; color:#10b981; border-radius:4px; margin:6px 0;">${sqlStr}</pre>
-        当前空间下已有 1 份文件通过人工核验并物理落库，文件类型为 <b>CONTRACT (合同)</b>，核心摘要为：“该合同是关于向供应商采购云服务器资源的框架协议，采购方承担主要履约责任，质保期为3年。”`;
-    }
-
-    return ansStr;
-}

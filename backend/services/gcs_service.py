@@ -35,21 +35,22 @@ class GCSService:
     def generate_v4_upload_signed_url(self, workspace_id: str, filename: str, content_type: str) -> dict:
         """
         2. 【核心亮点】签署具有 15 分钟时效的安全 V4 上传临时凭证。
-           支持中文转安全 ASCII 随机名并按日期（/年/月/日）进行物理目录隔离。
+           支持中文转安全 ASCII 随机名并收拢写入 workspaces/{workspace_id}/pending/{yyyy}/{mm}/{dd} 时序待处理热区下。
         """
         import uuid
         import os
-
+        import datetime
+        
         now = datetime.datetime.now()
-        year = now.strftime("%Y")
-        month = now.strftime("%m")
-        day = now.strftime("%d")
+        yyyy = now.strftime("%Y")
+        mm = now.strftime("%m")
+        dd = now.strftime("%d")
         
         _, ext = os.path.splitext(filename)
         random_name = f"{uuid.uuid4().hex}{ext}"
         
         bucket = self.client.bucket(self.bucket_name)
-        blob_path = f"workspaces/{workspace_id}/{year}/{month}/{day}/{random_name}"
+        blob_path = f"workspaces/{workspace_id}/pending/{yyyy}/{mm}/{dd}/{random_name}"
         blob = bucket.blob(blob_path)
 
         try:
@@ -79,22 +80,23 @@ class GCSService:
     async def upload_file_direct(self, workspace_id: str, file) -> str:
         """
         GCS 签名失效时的自愈安全中转：通过本地 API 读取二进制文件流并写回 GCS，
-        支持中文转安全 ASCII 随机名并按日期（/年/月/日）进行物理目录隔离。
+        支持中文转安全 ASCII 随机名并收拢写入 workspaces/{workspace_id}/pending/{yyyy}/{mm}/{dd} 待处理热区下。
         """
         import uuid
         import os
+        import datetime
         
         now = datetime.datetime.now()
-        year = now.strftime("%Y")
-        month = now.strftime("%m")
-        day = now.strftime("%d")
+        yyyy = now.strftime("%Y")
+        mm = now.strftime("%m")
+        dd = now.strftime("%d")
         
         original_filename = file.filename
         _, ext = os.path.splitext(original_filename)
         random_name = f"{uuid.uuid4().hex}{ext}"
         
         bucket = self.client.bucket(self.bucket_name)
-        blob_path = f"workspaces/{workspace_id}/{year}/{month}/{day}/{random_name}"
+        blob_path = f"workspaces/{workspace_id}/pending/{yyyy}/{mm}/{dd}/{random_name}"
         blob = bucket.blob(blob_path)
         
         # 写入原始中文名作为元数据，并在 GCS 完美的进行物理落盘
@@ -112,7 +114,7 @@ class GCSService:
         """
         import os
         bucket = self.client.bucket(self.bucket_name)
-        prefix = f"workspaces/{workspace_id}/"
+        prefix = f"workspaces/{workspace_id}/pending/"
         blobs = self.client.list_blobs(bucket, prefix=prefix)
 
         files = []
@@ -144,3 +146,45 @@ class GCSService:
                 "gcs_uri": f"gs://{self.bucket_name}/{blob.name}"
             })
         return files
+
+    def move_gcs_file(self, src_uri: str, dest_dir_name: str = "archive") -> str:
+        """
+        🚀 【物理搬家大国重器】
+        将 GCS 文件从待分析热区 (pending) 物理搬移到冷区归档文件夹 (archive) 下，
+        物理粉碎重复分析漏洞，实现发票/合同一键收纳归位。
+        """
+        if not src_uri.startswith("gs://"):
+            return src_uri
+            
+        try:
+            # 解析 gs://bucket/path/to/blob
+            path_parts = src_uri[5:].split("/", 1)
+            bucket_name = path_parts[0]
+            blob_name = path_parts[1]
+            
+            bucket = self.client.bucket(bucket_name)
+            source_blob = bucket.blob(blob_name)
+            
+            # 巧妙地将 blob_name 中的 /pending/ 部分替换为 /{dest_dir_name}/
+            # 这可以完美的、无变动保留其子路径中的所有年/月/日时序目录！
+            dest_blob_name = blob_name.replace("/pending/", f"/{dest_dir_name}/")
+            if dest_blob_name == blob_name:
+                # 兜底：直接替换
+                dest_blob_name = blob_name.replace("pending", dest_dir_name)
+                if dest_blob_name == blob_name:
+                    dest_blob_name = f"archive/{blob_name}"
+            
+            if dest_blob_name == blob_name:
+                return src_uri  # 路径一致，无需迁移
+                
+            # 执行 Copy + Delete (即物理 Move)
+            print(f"[GCS 物理归档] 📡 正在将源文件从 {blob_name} 物理复制到 {dest_blob_name} ...")
+            new_blob = bucket.copy_blob(source_blob, bucket, dest_blob_name)
+            print(f"[GCS 物理归档] 📡 复制成功！正在物理清除源文件 {blob_name} ...")
+            source_blob.delete()
+            print(f"[GCS 物理归档] ✅ 物理 Move 成功！文件已安全收纳至 Cold Archive 区。")
+            
+            return f"gs://{bucket_name}/{dest_blob_name}"
+        except Exception as e:
+            print(f"⚠️ [GCS 物理归档安全隔离] 迁移文件 {src_uri} 异常: {str(e)}")
+            return src_uri

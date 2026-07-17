@@ -56,7 +56,7 @@ SELECT
   JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.summary') AS summary,
   clean_json_str AS dynamic_attributes,
   COALESCE(JSON_VALUE(SAFE.PARSE_JSON(clean_json_str), '$.confidence_score'), 'high') AS confidence_score,
-  JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.evidence') AS evidence
+  TO_JSON_STRING(JSON_QUERY(SAFE.PARSE_JSON(clean_json_str), '$.evidence')) AS evidence
 FROM
   cleaned_results;
 """

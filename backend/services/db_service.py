@@ -48,96 +48,153 @@ class DatabaseService:
                 print("🔄 [SQLite-Migrate] 正在升级数据表，增加 Response Format 字段...")
                 cursor.execute("ALTER TABLE document_templates ADD COLUMN response_mime_type TEXT DEFAULT 'application/json'")
             
+            # 定义最顶级的大一统模板内容
+            default_contract = """你是一位极其严谨的资深“采购与法务审计专家”。请仔细审阅这份合同。
+你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "合同主标题",
+  "parties": ["采购方(甲方)企业全称", "销售方(乙方)企业全称"],
+  "key_dates": {
+    "合同签署日期": "YYYY-MM-DD",
+    "合同截止日期": "YYYY-MM-DD"
+  },
+  "amount": 100000.00,
+  "currency": "CNY",
+  "summary": "关于该采购合同的核心履约责任、采购标的物与交付要求的精简总结",
+  "dynamic_attributes": {
+    "交货期限": "最晚交货期限或工程完工节点约定",
+    "质保期限": "售后质保与硬件保修期限约定",
+    "付款方式": "合同款项分期结算与付款要求约定"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "合同文本中关于主标题判定的原文依据段落与条款原句",
+    "parties": "合同文本中签署双方甲乙企业名称判定的原文依据条款原句",
+    "key_dates": "合同签署与截止期限判定的原文依据条款原句",
+    "amount": "确定合同交易总金额判定的原文依据条款原句",
+    "currency": "确定计价币种判定的原文依据条款原句",
+    "summary": "确定合同总结信息的原文判定依据",
+    "交货期限": "确定交货期约定的原文条款段落依据",
+    "质保期限": "确定质保期约定的原文条款段落依据",
+    "付款方式": "确定付款方式约定的原文条款段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据第三条第1款：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。"""
+
+            default_resume = """你是一位极其严谨的资深“猎头招聘与人才审计专家”。请仔细审阅这份候选人求职简历。
+你的任务是精确提取人才的核心资历，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "候选人求职简历标准标题",
+  "parties": ["候选人姓名", "最近任职公司或毕业院校名称"],
+  "key_dates": {
+    "最近任职开始时间": "YYYY-MM-DD",
+    "最近任职结束时间": "YYYY-MM-DD"
+  },
+  "amount": null,
+  "currency": "CNY",
+  "summary": "对该候选人专业技术背景、项目亮点与岗位匹配度的客观评价总结",
+  "dynamic_attributes": {
+    "求职岗位": "候选人求职或最近一段履历的岗位名称",
+    "核心技术栈": "候选人最擅长且具备深度实战经验的核心技术体系",
+    "工作年限": "候选人从第一份工作起算的总工作资历时长"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "简历文本中关于候选人主标题判定的原文依据段落原句",
+    "parties": "简历文本中确定姓名、就职单位判定的原文依据段落原句",
+    "key_dates": "简历中最近任职起止期限判定的原文依据条款原句",
+    "amount": "确定期望薪资或财务属性的原文依据段落（若无请写“无”）",
+    "currency": "确定期望薪资币种判定的原文依据段落（若无请写“无”）",
+    "summary": "确定总结信息的原文判定依据",
+    "求职岗位": "确定期望岗位的原文段落依据",
+    "核心技术栈": "确定擅长技术栈的原文段落依据",
+    "工作年限": "确定工作年限判定的原文段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据简历第几段：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。"""
+
+            default_invoice = """你是一位极其严谨的资深“出纳审计与财务税务合规专家”。请仔细审阅这份发票凭证。
+你的任务是精确提取发票的核对条款，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "发票标准标题",
+  "parties": ["销售方(开票单位)企业全称", "购买方(受票单位)企业全称"],
+  "key_dates": {
+    "开票日期": "YYYY-MM-DD"
+  },
+  "amount": 10000.00,
+  "currency": "CNY",
+  "summary": "发票所开具的主营服务、商品类别及税率明细简述",
+  "dynamic_attributes": {
+    "发票号码": "发票票面上唯一的识别开票代码",
+    "发票税率": "财务税控核账的法定开票税率"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "发票票面上标题判定的原文依据",
+    "parties": "销售方与购买方企业名称判定的原文票面依据原句",
+    "key_dates": "发票开具日期判定的原文票面依据原句",
+    "amount": "确定发票含税总金额判定的原文票面依据原句",
+    "currency": "确定发票计价币种判定的原文票面依据原句",
+    "summary": "确定发票服务明细内容的原文判定依据",
+    "发票号码": "确定发票号码判定的原文票面依据原句",
+    "发票税率": "确定开票税率判定的原文票面依据原句"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据发票右上方：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。"""
+
+            default_other = """你是一位极其严谨的资深“商业综合文档审计专家”。请仔细审阅这份综合性文档。
+你的任务是精确提取文档的核心商业情报，严格以标准的纯 JSON 格式输出，格式如下：
+{
+  "doc_title": "文档主标题",
+  "parties": ["文档提及的核心主体或公司名称列表"],
+  "key_dates": {
+    "关键时间时点": "YYYY-MM-DD"
+  },
+  "amount": null,
+  "currency": "CNY",
+  "summary": "对该综合文档一句话中文核心内容总结",
+  "dynamic_attributes": {
+    "文档分类描述": "大模型判定该文档的物理公约数分类属性",
+    "核心结论": "文档中提炼出的对企业决策最关键的结论"
+  },
+  "confidence_score": "high",
+  "evidence": {
+    "doc_title": "文档文本中确定标题的原文依据段落",
+    "parties": "文档中关于提及主体判定的原文依据段落",
+    "key_dates": "文档中关键时间判定的原文依据段落",
+    "amount": "文档中涉及的合同/交易金额依据（若无请写“无”）",
+    "currency": "文档中涉及的计价币种依据（若无请写“无”）",
+    "summary": "摘要提炼得出的原文段落依据",
+    "文档分类描述": "确定文档属性分类的原文依据",
+    "核心结论": "确定核心结论的原文段落依据"
+  }
+}
+
+【提取及原文判定证据链硬约束】：
+1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的专属属性）提供在原文中一字不漏的「原文判定来源与依据原句」。
+2. 原文依据需具体到对应章节条款段落（例如：“根据文档第几段：... ），绝对不可含糊编造。若无原文提及，请写“未在原文中提及”。"""
+
             # 检测是否为空，若空则灌注 4 大核心内置模板种子数据
             cursor.execute("SELECT COUNT(*) FROM document_templates")
             count = cursor.fetchone()[0]
             
             if count == 0:
                 print("🌱 [SQLite-Seed] 检测到模板数据库为空，正在注入四大黄金内置专家模板种子...")
-                
-                default_contract = """你是一位极其严谨的资深采购与法务审计专家。请仔细审阅这份合同。
-你的任务是精确提取合同的核心条款，严格以标准的纯 JSON 格式输出，格式如下：
-{
-  "doc_title": "合同主标题",
-  "parties": ["甲方公司名称", "乙方公司名称"],
-  "key_dates": {
-    "签署日期": "YYYY-MM-DD", 
-    "截止日期": "YYYY-MM-DD"
-  },
-  "amount": 100000.00,
-  "currency": "CNY",
-  "summary": "合同核心采购标的和履约责任摘要（100字内）",
-  "dynamic_attributes": {
-    "buyer": "合同甲方(采购方)单位全称",
-    "seller": "合同乙方(供货方)单位全称",
-    "delivery_deadline": "最晚交货期限",
-    "warranty_years": "质保年限"
-  },
-  "confidence_score": "high",
-  "evidence": {
-    "doc_title": "确定合同标题的原文段落",
-    "parties": "确定签署双方(甲乙方)全称的原文条款原句",
-    "key_dates": "确定合同签署日期与截止日期的原文条款原句",
-    "amount": "确定合同总金额的原文条款原句",
-    "currency": "确定计价货币的原文条款原句",
-    "summary": "确定核心标的、履约责任对应的原文条款原句",
-    "buyer": "确定甲方采购方名称的原文条款原句",
-    "seller": "确定乙方供货方名称的原文条款原句",
-    "delivery_deadline": "确定最晚交货期限的原文条款原句",
-    "warranty_years": "确定质保年限的原文条款原句"
-  }
-}
-
-【判定来源法务审计要求】：
-1. 必须在 "evidence" 对象中，为上述提取出来的每一个字段（包含 dynamic_attributes 里的 buyers/sellers/delivery_deadline 等）提供在合同原文中一字不漏的「原文判定来源与依据原句」。
-2. 原文依据需具体到合同章节条款（如：“根据第二条第1款：交货期限为...”），绝不可含糊编造。若无原文提及，请写“未在合同原文中提及”。"""
-                
-                default_resume = """你是一位资深猎头和 HR 总监。请评估这份简历，严格以标准的纯 JSON 格式输出，格式如下：
-{
-  "doc_title": "姓名_求职简历",
-  "parties": ["姓名", "最近任职公司"],
-  "key_dates": {"最近入职时间": "YYYY-MM-DD"},
-  "amount": null,
-  "currency": "CNY",
-  "summary": "候选人评价",
-  "dynamic_attributes": {"job_title": "求职岗位", "skills": "核心技术栈"},
-  "confidence_score": "high",
-  "evidence": {"skills": "核心技能依据"}
-}"""
-                
-                default_invoice = """你是一位资深出纳与税务专家。请核对这张发票，严格以标准的纯 JSON 格式输出，格式如下：
-{
-  "doc_title": "发票_开票方",
-  "parties": ["销售方", "购买方"],
-  "key_dates": {"开票日期": "YYYY-MM-DD"},
-  "amount": 5000.00,
-  "currency": "CNY",
-  "summary": "服务摘要",
-  "dynamic_attributes": {"invoice_code": "发票号码", "tax_rate": "税率"},
-  "confidence_score": "high",
-  "evidence": {"amount": "发票金额依据"}
-}"""
-                
-                default_other = """你是一个全能商业文档助理。请阅读文件并做最简总结，严格以标准的纯 JSON 格式输出，格式如下：
-{
-  "doc_title": "文件主标题",
-  "parties": ["相关主体"],
-  "key_dates": {"关联日期": "YYYY-MM-DD"},
-  "amount": null,
-  "currency": "CNY",
-  "summary": "一句话核心内容摘要",
-  "dynamic_attributes": {"document_purpose": "该文件用途"},
-  "confidence_score": "high",
-  "evidence": {}
-}"""
-                
                 seeds = [
                     ("contract", "合同法务专家", default_contract, 0.1, 1024, 0.95, "application/json"),
                     ("resume", "猎头与招聘总监", default_resume, 0.4, 1024, 0.95, "application/json"),
                     ("invoice", "发票财务审核", default_invoice, 0.1, 512, 0.95, "application/json"),
                     ("other", "通用文档处理", default_other, 0.2, 1024, 0.95, "application/json"),
                 ]
-                
                 cursor.executemany("""
                     INSERT INTO document_templates (category, display_name, prompt_template, temperature, max_output_tokens, top_p, response_mime_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -145,7 +202,13 @@ class DatabaseService:
                 conn.commit()
                 print("🎉 [SQLite-Seed] 内置种子数据注入成功！")
             else:
-                # 若已存在数据，但老版本没有初始化新字段值，则进行平稳值设置保护
+                # ⚡【热更新强制对齐】：首长以前库里若已经有数据，我们直接在每次启动时将其强制刷新为大统一合规模板，确保 100% 体验一致！
+                cursor.execute("UPDATE document_templates SET display_name = '合同法务专家', prompt_template = ? WHERE category = 'contract'", (default_contract,))
+                cursor.execute("UPDATE document_templates SET display_name = '猎头与招聘总监', prompt_template = ? WHERE category = 'resume'", (default_resume,))
+                cursor.execute("UPDATE document_templates SET display_name = '发票财务审核', prompt_template = ? WHERE category = 'invoice'", (default_invoice,))
+                cursor.execute("UPDATE document_templates SET display_name = '通用文档处理', prompt_template = ? WHERE category = 'other'", (default_other,))
+                
+                # 升级老版本没有初始化新字段值时的平稳值设置保护
                 cursor.execute("""
                     UPDATE document_templates 
                     SET temperature = 0.1, max_output_tokens = 512 
@@ -157,6 +220,7 @@ class DatabaseService:
                     WHERE category = 'resume' AND (temperature IS NULL OR temperature = 0.1)
                 """)
                 conn.commit()
+                print("⚡ [SQLite-Migrate] 四大黄金内置模版已成功热同步对齐为最新审计级 Schema 格式！")
 
             # 💡 [SystemConfigs-Table] 创建系统核心配置参数表 (Key-Value)
             cursor.execute("""

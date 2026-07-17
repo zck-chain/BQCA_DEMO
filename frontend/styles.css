@@ -540,11 +540,24 @@ button {
     padding: 10px 16px;
     border-radius: 8px;
     font-size: 12px;
+    cursor: pointer;
+    transition: all 0.25s ease;
 }
 
 .sec-btn:hover {
     background: var(--hover-bg);
-    border-color: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #fff;
+}
+
+/* 🌟 极致科技霓虹高亮 ── 一眼即知当前所在模板 (Premium Neon Glow Tab) */
+.sec-btn.active {
+    background: rgba(100, 255, 218, 0.12) !important;
+    border: 1.5px solid #64ffda !important;
+    color: #64ffda !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 15px rgba(100, 255, 218, 0.3) !important;
+    text-shadow: 0 0 4px rgba(100, 255, 218, 0.2) !important;
 }
 
 .icon-btn {

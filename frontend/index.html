@@ -76,12 +76,15 @@
                         <h3><i class="fa-solid fa-folder-open"></i> GCS 云端存储网盘</h3>
                     </div>
                     
-                    <!-- 拖拽上传区域 -->
-                    <div class="dropzone disabled" id="dropzone">
-                        <div class="dropzone-content">
+                    <!-- 拖拽上传与点击唤起双轨区域 -->
+                    <div class="dropzone disabled" id="dropzone" style="cursor: pointer;">
+                        <!-- 隐藏的物理文件系统唤起口 -->
+                        <input type="file" id="file-input" accept="application/pdf,image/*" style="display: none;" multiple>
+                        
+                        <div class="dropzone-content" style="pointer-events: none;">
                             <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
-                            <p class="upload-text">拖拽 PDF, 图片, 发票或简历文件到此处直传</p>
-                            <span class="upload-sub">大平层签名安全 Signed URL 协议直传 (PUT)，极速、高并发且不占服务器带宽</span>
+                            <p class="upload-text">拖拽文件到此处，或【直接点击】唤起本地文件系统</p>
+                            <span class="upload-sub">支持 PDF、简历、图片与合同直传。安全 Signed URL 协议直传 (PUT)，极速不占带宽</span>
                         </div>
                     </div>
 
@@ -94,30 +97,62 @@
                     </div>
                 </div>
 
-                <!-- 右栏：分析大屏与提取结果 -->
-                <div class="glass-card results-container">
-                    <div class="card-header">
-                        <h3><i class="fa-solid fa-chart-line"></i> BQ 动态两阶段提取预览</h3>
+                <!-- 右栏：分析大屏与提取结果 (上下分层待办/已办) -->
+                <div class="glass-card results-container" style="display: flex; flex-direction: column; gap: 24px; padding: 20px;">
+                    <!-- 上层：待审核队列 -->
+                    <div class="pending-section" style="display: flex; flex-direction: column; gap: 12px;">
+                        <div class="card-header" style="margin-bottom: 0; padding-bottom: 0;">
+                            <h3 style="font-size: 14px; display: flex; align-items: center; gap: 8px; color: #fff;">
+                                <i class="fa-solid fa-hourglass-half" style="color: var(--accent-pink);"></i> 待审核数据队列 (Pending Review)
+                            </h3>
+                        </div>
+                        <div class="table-wrapper" style="max-height: 230px; overflow-y: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th width="15%">分类</th>
+                                        <th width="30%">智能判定标题</th>
+                                        <th width="18%">核算金额</th>
+                                        <th width="18%">解析状态</th>
+                                        <th width="11%">置信度</th>
+                                        <th width="8%">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analysis-table-body">
+                                    <tr>
+                                        <td colspan="6" class="table-empty-hint">请上传文件并点击“一键大模型提取”按钮开始分析</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
-                    <div class="table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th width="15%">分类</th>
-                                    <th width="30%">智能判定标题</th>
-                                    <th width="18%">核算金额</th>
-                                    <th width="18%">解析状态</th>
-                                    <th width="11%">置信度</th>
-                                    <th width="8%">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="analysis-table-body">
-                                <tr>
-                                    <td colspan="6" class="table-empty-hint">请上传文件并点击“一键大模型提取”按钮开始分析</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <!-- 下层：已归档历史大表 -->
+                    <div class="history-section" style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 20px; display: flex; flex-direction: column; gap: 12px;">
+                        <div class="card-header" style="margin-bottom: 0; padding-bottom: 0;">
+                            <h3 style="font-size: 14px; display: flex; align-items: center; gap: 8px; color: #fff;">
+                                <i class="fa-solid fa-circle-check" style="color: #10b981;"></i> 物理数仓黄金历史大表 (Approved Archives)
+                            </h3>
+                        </div>
+                        <div class="table-wrapper" style="max-height: 230px; overflow-y: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th width="15%">分类</th>
+                                        <th width="30%">物理归档标题</th>
+                                        <th width="18%">核算金额</th>
+                                        <th width="18%">归档状态</th>
+                                        <th width="11%">置信度</th>
+                                        <th width="8%">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-table-body">
+                                    <tr>
+                                        <td colspan="6" class="table-empty-hint">暂无已人工核查物理落库的历史记录</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -226,42 +261,6 @@
             <div class="modal-footer">
                 <button class="sec-btn" id="btn-cancel">取消返回</button>
                 <button class="primary-btn" id="btn-confirm-create">一键全自动初始化</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- =================================================================
-         右下角：已激活 BQCA 智脑自然语言对话挂件 (Conversational BI Portal)
-         ================================================================= -->
-    <div class="bqca-widget-container hidden" id="bqca-widget">
-        <!-- 悬浮触发按钮 -->
-        <button class="bqca-toggle-bubble pulse-glow" id="bqca-toggle">
-            <i class="fa-solid fa-comments"></i> 问答智脑已激活
-        </button>
-
-        <!-- 聊天面板 -->
-        <div class="bqca-chat-box hidden" id="bqca-chat-box">
-            <div class="chat-header">
-                <div class="chat-title-meta">
-                    <i class="fa-solid fa-robot pulse-glow"></i>
-                    <div>
-                        <h4>BQCA 语义智脑问答</h4>
-                        <span>已关联已人工核实的物理表</span>
-                    </div>
-                </div>
-                <button class="icon-btn" id="chat-close-btn"><i class="fa-solid fa-chevron-down"></i></button>
-            </div>
-            
-            <div class="chat-body" id="bqca-messages">
-                <div class="msg msg-bot">
-                    <p>👋 您好！当前空间的人工审核物理表已成功部署并一键绑定到我。由于底层 Schema 列级塞入了极致精准的 DDL 注释，你可以随时向我提问，我绝对不会胡说八道！<br>
-                    尝试问我：<b>“把所有合同列一下”</b> 或者 <b>“查找有5年以上经验的开发”</b>。</p>
-                </div>
-            </div>
-
-            <div class="chat-footer">
-                <input type="text" id="bqca-input" placeholder="输入问题（人话），让 AI 生成 SQL 执行...">
-                <button class="primary-btn" id="btn-send-chat" style="padding: 10px 14px;"><i class="fa-solid fa-paper-plane"></i></button>
             </div>
         </div>
     </div>

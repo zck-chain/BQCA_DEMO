@@ -5,4 +5,7 @@ google-cloud-bigquery
 pydantic
 aiofiles
 python-multipart
+google-cloud-bigquery-connection
+google-cloud-discoveryengine
+
 

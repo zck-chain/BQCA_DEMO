@@ -7,6 +7,7 @@
 """
 
 import json
+from typing import Optional, List, Dict, Any
 from google.cloud import bigquery
 from backend import config
 from backend import sql_templates

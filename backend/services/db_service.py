@@ -242,7 +242,7 @@ class DatabaseService:
                 )
             """)
             
-            # 检测是否配置为空，若空则灌注 GCP 三要素默认种子
+            # 检测是否配置为空，若空则灌注 GCP 核心配置默认种子
             cursor.execute("SELECT COUNT(*) FROM system_configs")
             config_count = cursor.fetchone()[0]
             if config_count == 0:
@@ -250,7 +250,8 @@ class DatabaseService:
                 configs = [
                     ("gcp_project_id", "webeye-internal-test"),
                     ("gcs_bucket_name", "bqca-demo"),
-                    ("bq_connection_name", "bqca_external_connection")
+                    ("bq_connection_name", "bqca_external_connection"),
+                    ("bqca_agent_id", "ecommerce-analyst-cn")
                 ]
                 cursor.executemany("""
                     INSERT INTO system_configs (config_key, config_value)

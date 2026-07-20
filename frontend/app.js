@@ -916,6 +916,7 @@ function injectConfigPanelToHeader() {
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">BQ 物理外部连接 (Connection Name)</label>
                         <input type="text" id="gcp-input-connection" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: bqca_external_connection">
                     </div>
+                    <!-- 💡 BQCA 智能体绑定 ID (GCP Agent ID) 已被注释隐藏，后台向后兼容支持不被影响
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">💡 BQCA 智能体绑定 ID (GCP Agent ID)</label>
                         <div style="font-size:11px; color:#f59e0b; margin-bottom:4px; padding:4px 8px; background:rgba(245,158,11,0.1); border-radius:4px; border:1px solid rgba(245,158,11,0.3);">
@@ -923,6 +924,7 @@ function injectConfigPanelToHeader() {
                         </div>
                         <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: ecommerce-analyst-cn (仅 global 区域)">
                     </div>
+                    -->
                 </div>
 
                 <!-- 云端探针自检返回区 -->
@@ -1039,7 +1041,11 @@ function injectConfigPanelToHeader() {
                 document.getElementById("gcp-input-project").value = result.data.gcp_project_id || "";
                 document.getElementById("gcp-input-bucket").value = result.data.gcs_bucket_name || "";
                 document.getElementById("gcp-input-connection").value = result.data.bq_connection_name || "";
-                document.getElementById("gcp-input-agent-id").value = result.data.bqca_agent_id || "";
+                
+                const agentInput = document.getElementById("gcp-input-agent-id");
+                if (agentInput) {
+                    agentInput.value = result.data.bqca_agent_id || "";
+                }
                 
                 // 状态灯更新
                 const pill = document.getElementById("gcp-probe-status-pill");
@@ -1063,7 +1069,9 @@ function injectConfigPanelToHeader() {
             const projectId = document.getElementById("gcp-input-project").value.trim();
             const bucketName = document.getElementById("gcp-input-bucket").value.trim();
             const connectionName = document.getElementById("gcp-input-connection").value.trim();
-            const bqcaAgentId = document.getElementById("gcp-input-agent-id").value.trim();
+            
+            const agentIdEl = document.getElementById("gcp-input-agent-id");
+            const bqcaAgentId = agentIdEl ? agentIdEl.value.trim() : "";
 
             if (!projectId || !bucketName || !connectionName) {
                 showToast("配置不可为空", "听哥劝，GCP三要素（项目ID、桶名、连接名）可不能留空！", "error");
@@ -1497,12 +1505,38 @@ async function uploadFileToGCS(file) {
             return;
         }
 
-        const { upload_url, gcs_uri } = result.data;
+        const { upload_url, gcs_uri, fallback_upload } = result.data;
 
-        // 2. 使用 PUT 请求直传二进制流到谷歌 GCS (100% 绕过 Python 服务器，极速、零带宽开销)
-        document.querySelector(".upload-text").innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在安全上传二进制流至 GCS 桶中 (0%)...`;
-        
-        const uploadRes = await axiosPutWithProgress(upload_url, file);
+        let uploadRes;
+        if (fallback_upload) {
+            // 2. 自愈中转：如果环境不支持 V4 签署（如 ADC 模式），调用本地后端中转接口
+            document.querySelector(".upload-text").innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在通过本地自愈中转上传至 GCS (0%)...`;
+            
+            const formData = new FormData();
+            formData.append("file", file);
+            
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", `${API_BASE}${upload_url}`, true);
+            
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    document.querySelector(".upload-text").innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在通过本地自愈中转上传至 GCS (${percent}%)...`;
+                }
+            };
+            
+            const uploadPromise = new Promise((resolve, reject) => {
+                xhr.onload = () => resolve({ status: xhr.status });
+                xhr.onerror = () => reject(new Error("自愈中转上传失败"));
+            });
+            
+            xhr.send(formData);
+            uploadRes = await uploadPromise;
+        } else {
+            // 2. 直传 GCS：PUT 请求直传二进制流到谷歌 GCS (100% 绕过 Python 服务器，极速、零带宽开销)
+            document.querySelector(".upload-text").innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在安全直传二进制流至 GCS 桶中 (0%)...`;
+            uploadRes = await axiosPutWithProgress(upload_url, file);
+        }
 
         if (uploadRes.status === 200) {
             showToast("GCS 直传成功", `文件 <strong>${file.name}</strong> 已经安全落入 GCS 专有目录并同步至 BQ 对象表！`, "success");
@@ -2005,7 +2039,7 @@ btnHilSubmit.onclick = async () => {
             // 💡 秒级全物理联动：落库后文件已在 GCS 端被物理剪切，立即重载左栏云网盘源文件列表，让已被处理的 PDF 瞬间消失
             fetchFileList();
         } else {
-            showToast("绑定物理表失败", result.message, "error");
+            showToast("绑定物理表失败", result.detail || result.message || "未知错误", "error");
         }
     } catch (e) {
         showToast("物理归档异常", "核对提交异常，无法写入物理结果表，请检查网络！", "error");

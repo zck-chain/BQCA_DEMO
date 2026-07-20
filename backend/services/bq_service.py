@@ -220,7 +220,8 @@ class BigQueryService:
                     for payload in demo_payloads:
                         try:
                             # 绕过 GCS 物理剪切，直接执行物理建表与 DML Upsert，速度快 100 倍！
-                            results_table = f"{config.get_project_id()}.workspace_{w_space}.t_verified_smart_drive"
+                            dataset_id = self.get_dataset_id(w_space)
+                            results_table = f"{config.get_project_id()}.{dataset_id}.t_verified_smart_drive"
                             init_table_ddl = f"""
                                 CREATE TABLE IF NOT EXISTS `{results_table}` (
                                   uri STRING OPTIONS (description="GCS存储桶中文件的唯一物理路径（主键）"),
@@ -233,12 +234,27 @@ class BigQueryService:
                                   summary STRING OPTIONS (description="文件一句话核心中文摘要（100字内）"),
                                   dynamic_attributes JSON OPTIONS (description="自适应特有核心属性（例如合同的质保期和交货限期，求职人的求职岗位和技术栈，支持 JSON 穿透）"),
                                   evidence JSON OPTIONS (description="大模型判定每一个字段的关键原文依据"),
-                                  parse_status STRING OPTIONS (description="解析状态，在人工确认后强制标记为 approved 归档")
-                                ) OPTIONS(
+                                  parse_status STRING OPTIONS (description="解析状态，在人工确认后强制标记为 approved 归档"),
+                                  created_at TIMESTAMP OPTIONS (description="数据物理写入落库的时间戳，自动开启底层分区裁剪检索")
+                                ) 
+                                PARTITION BY DATE(created_at)
+                                OPTIONS(
                                   description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。"
                                 );
                             """
                             self.client.query(init_table_ddl).result()
+
+                            # 🚀 【Schema 热升级自愈防线】如果表已存在，但由于历史版本残留导致没有 created_at 列，我们动态执行 ALTER TABLE ADD COLUMN 热升级
+                            try:
+                                table_ref = self.client.get_table(results_table)
+                                col_names = [field.name for f in [table_ref] for field in f.schema]
+                                if "created_at" not in col_names:
+                                    print(f"[Schema 热升级] 📡 检测到实体表 {results_table} 缺少 'created_at' 字段，开始自动注入升级 DDL ...")
+                                    alter_ddl = f"ALTER TABLE `{results_table}` ADD COLUMN IF NOT EXISTS created_at TIMESTAMP OPTIONS (description='数据物理写入落库的时间戳')"
+                                    self.client.query(alter_ddl).result()
+                                    print(f"[Schema 热升级] ✅ 实体表 {results_table} 'created_at' 字段升级注入成功 ！！！")
+                            except Exception as e_schema:
+                                print(f"⚠️ [Schema 热升级异常] {str(e_schema)}")
                             
                             upsert_dml = f"""
                                 MERGE `{results_table}` T
@@ -256,8 +272,8 @@ class BigQueryService:
                                     evidence = SAFE.PARSE_JSON(@evidence),
                                     parse_status = 'approved'
                                 WHEN NOT MATCHED THEN
-                                  INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, evidence, parse_status)
-                                  VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), SAFE.PARSE_JSON(@evidence), 'approved');
+                                  INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, evidence, parse_status, created_at)
+                                  VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), SAFE.PARSE_JSON(@evidence), 'approved', CURRENT_TIMESTAMP());
                             """
                             job_config = bigquery.QueryJobConfig(
                                 query_parameters=[
@@ -306,23 +322,35 @@ class BigQueryService:
         if workspace_id.startswith("workspace_"):
             return workspace_id
             
+        # 💡 [Smart-Routing-Cache-Memory]：引入内存缓存，消除 redundant 的物理 GCP API 探测，延迟瞬间暴降至 0ms ！！！
+        if not hasattr(self, "_dataset_id_cache"):
+            self._dataset_id_cache = {}
+            
+        if workspace_id in self._dataset_id_cache:
+            return self._dataset_id_cache[workspace_id]
+            
         # 探测项目下是否直接存在这个不带前缀的 dataset ！！！
         try:
             ds_ref = self.client.dataset(workspace_id)
             self.client.get_dataset(ds_ref)
             # 如果没抛 404 异常，说明 BQ 里面确实有这个不带前缀的数据集 ！！！直接使用 ！！！
             print(f"🎯 [Smart-Dataset-Mapper] 物理探测发现直接存在的不带前缀黄金数据集: {workspace_id}")
+            self._dataset_id_cache[workspace_id] = workspace_id
             return workspace_id
         except Exception:
             pass
             
-        # 如果直接不存在，我们智能降级退回到带 workspace_ 前缀的名字
-        return f"workspace_{workspace_id}"
+        # 如果直接不存在，我们智能降级退回到带 workspace_ 前缀的名字，并写入缓存 ！！！
+        resolved = f"workspace_{workspace_id}"
+        self._dataset_id_cache[workspace_id] = resolved
+        return resolved
 
     @property
     def client(self):
-        # 运行时动态获取当前生效的项目ID实例化，支持配置秒级热更新
-        return bigquery.Client(project=config.get_project_id())
+        # 运行时动态获取当前生效的项目ID实例化，并常驻缓存复用底层 TCP 连接池，消灭频繁网络三次握手延迟 ！！！
+        if not hasattr(self, '_client_cache') or self._client_cache is None:
+            self._client_cache = bigquery.Client(project=config.get_project_id())
+        return self._client_cache
 
     def get_active_location(self) -> str:
         """
@@ -1053,12 +1081,28 @@ FROM
               summary STRING OPTIONS (description="文件一句话核心中文摘要（100字内）"),
               dynamic_attributes JSON OPTIONS (description="自适应特有核心属性（例如合同的质保期和交货限期，求职人的求职岗位和技术栈，支持 JSON 穿透）"),
               evidence JSON OPTIONS (description="大模型判定每一个字段的关键原文依据"),
-              parse_status STRING OPTIONS (description="解析状态，在人工确认后强制标记为 approved 归档")
-            ) OPTIONS(
+              parse_status STRING OPTIONS (description="解析状态，在人工确认后强制标记为 approved 归档"),
+              created_at TIMESTAMP OPTIONS (description="数据物理写入落库的时间戳，自动开启底层分区裁剪检索")
+            ) 
+            PARTITION BY DATE(created_at)
+            OPTIONS(
               description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。当用户询问关于合同、发票、简历、采购、财务等业务数据统计、过滤、求和的问题时，AI 代理必须且只能查询本表！"
             );
         """
         self.client.query(init_table_ddl).result()
+
+        # 🚀 【Schema 热升级自愈防线】如果表已存在，但由于历史版本残留导致没有 created_at 列，我们动态执行 ALTER TABLE ADD COLUMN 热升级
+        try:
+            table_ref = self.client.get_table(results_table)
+            col_names = [field.name for f in [table_ref] for field in f.schema]
+            if "created_at" not in col_names:
+                print(f"[Schema 热升级] 📡 检测到实体表 {results_table} 缺少 'created_at' 字段，开始自动注入升级 DDL ...")
+                alter_ddl = f"ALTER TABLE `{results_table}` ADD COLUMN IF NOT EXISTS created_at TIMESTAMP OPTIONS (description='数据物理写入落库的时间戳')"
+                self.client.query(alter_ddl).result()
+                print(f"[Schema 热升级] ✅ 实体表 {results_table} 'created_at' 字段升级注入成功 ！！！")
+        except Exception as e_schema:
+            print(f"⚠️ [Schema 热升级异常] {str(e_schema)}")
+
 
         # 2. 合并写入（Upsert / Merge）
         upsert_dml = f"""
@@ -1077,8 +1121,8 @@ FROM
                 evidence = SAFE.PARSE_JSON(@evidence),
                 parse_status = 'approved'
             WHEN NOT MATCHED THEN
-              INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, evidence, parse_status)
-              VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), SAFE.PARSE_JSON(@evidence), 'approved');
+              INSERT (uri, doc_type, doc_title, parties, key_dates, amount, currency, summary, dynamic_attributes, evidence, parse_status, created_at)
+              VALUES (@uri, @doc_type, @doc_title, SAFE.PARSE_JSON(@parties), SAFE.PARSE_JSON(@key_dates), @amount, @currency, @summary, SAFE.PARSE_JSON(@dynamic_attributes), SAFE.PARSE_JSON(@evidence), 'approved', CURRENT_TIMESTAMP());
         """
         
         job_config = bigquery.QueryJobConfig(

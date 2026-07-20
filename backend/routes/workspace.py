@@ -190,4 +190,6 @@ def approve_and_correct_document(request: HumanCorrectRequest):
             "message": "人工审核与语义表描述注入完成！完美数据已精准归档物理数仓。"
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"核对更新异常: {str(e)}")

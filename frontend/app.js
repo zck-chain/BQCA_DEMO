@@ -916,7 +916,6 @@ function injectConfigPanelToHeader() {
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">BQ 物理外部连接 (Connection Name)</label>
                         <input type="text" id="gcp-input-connection" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: bqca_external_connection">
                     </div>
-                    <!-- 💡 BQCA 智能体绑定 ID (GCP Agent ID) 已被注释隐藏，后台向后兼容支持不被影响
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">💡 BQCA 智能体绑定 ID (GCP Agent ID)</label>
                         <div style="font-size:11px; color:#f59e0b; margin-bottom:4px; padding:4px 8px; background:rgba(245,158,11,0.1); border-radius:4px; border:1px solid rgba(245,158,11,0.3);">
@@ -924,7 +923,6 @@ function injectConfigPanelToHeader() {
                         </div>
                         <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: ecommerce-analyst-cn (仅 global 区域)">
                     </div>
-                    -->
                 </div>
 
                 <!-- 云端探针自检返回区 -->
@@ -1734,10 +1732,13 @@ async function fetchAnalysisResults() {
     try {
         const res = await fetch(`${API_BASE}/api/workspace/results/${currentWorkspace}`);
         const result = await res.json();
-        if (result.success && result.data.length > 0) {
+        if (result.success && result.data && result.data.length > 0) {
             analysisResults = result.data;
             renderAnalysisTable();
         } else {
+            // 💡 空间完全物理隔离：当切换到一个完全没有分析结果的空白空间时，必须彻底物理清空已核对历史和分析数据缓存！
+            analysisResults = [];
+            renderAnalysisTable();
             analysisTableBody.innerHTML = `<tr><td colspan="6" class="table-empty-hint">请上传文件并点击“一键大模型提取”按钮开始分析</td></tr>`;
         }
     } catch (e) {

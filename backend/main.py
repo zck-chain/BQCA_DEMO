@@ -52,14 +52,25 @@ def startup_event():
 
 
 
-@app.get("/", summary="测试服务可用性状态灯")
+# -------------------------------------------------------------------------
+# 静态资源挂载与容器化部署支持
+# -------------------------------------------------------------------------
+import os
+from fastapi.staticfiles import StaticFiles
+
+@app.get("/health", summary="测试服务可用性状态灯")
 def root_health_check():
     return {
         "status": "healthy",
         "service": "AI Netdisk Analytics Engine",
-        "framework": "FastAPI",
-        "author": "老麦"
+        "framework": "FastAPI"
     }
+
+# 🚀 【全栈单容器热部署】若检测到 frontend 目录存在，自动将其挂载为根目录静态托管
+# 这将使得前端与后端同域部署，完全规避 CORS 跨域问题，并且支持单个 Cloud Run 实例全栈起飞！
+if os.path.exists("frontend"):
+    print("🎨 [Frontend-Host] 检测到本地前端资源目录，自动启动全托管静态网页服务 ── 开启一键单镜像极速部署模式 ！！！")
+    app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 if __name__ == "__main__":

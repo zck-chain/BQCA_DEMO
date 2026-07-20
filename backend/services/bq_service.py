@@ -240,7 +240,7 @@ class BigQueryService:
                                 ) 
                                 PARTITION BY DATE(created_at)
                                 OPTIONS(
-                                  description="【{w_space} 专属黄金知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了工作空间 {w_space} 的相关业务合同、物理单据、采购和财务数据。"
+                                  description="{w_space}"
                                 );
                             """
                             self.client.query(init_table_ddl).result()
@@ -1087,7 +1087,7 @@ FROM
             ) 
             PARTITION BY DATE(created_at)
             OPTIONS(
-              description="【{workspace_id} 专属黄金知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了工作空间 {workspace_id} 的相关业务合同、物理单据、采购和财务数据。"
+              description="{workspace_id}"
             );
         """
         self.client.query(init_table_ddl).result()
@@ -1261,7 +1261,7 @@ FROM
                     alter_table_ddl = f"""
                         ALTER TABLE `{results_table}`
                         SET OPTIONS(
-                          description="【{workspace_id} 专属黄金知识库】经过人工双屏审计、订正核对后的完美黄金实体表。包含工作空间 {workspace_id} 相关的核心业务合同与单据数据。[物理重载震荡信号: {timestamp_str}]"
+                          description="{workspace_id}"
                         );
                     """
                     self.client.query(alter_table_ddl).result()
@@ -1270,7 +1270,7 @@ FROM
                     alter_dataset_ddl = f"""
                         ALTER SCHEMA `{config.get_project_id()}.{dataset_id}`
                         SET OPTIONS(
-                          description="【{workspace_id} 专属数据大本盘】工作空间 {workspace_id} 对应的 BQCA 数据集。[物理重载震荡信号: {timestamp_str}]"
+                          description="{workspace_id}"
                         );
                     """
                     self.client.query(alter_dataset_ddl).result()

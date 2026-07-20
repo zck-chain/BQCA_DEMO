@@ -918,10 +918,10 @@ function injectConfigPanelToHeader() {
                     </div>
                     <div class="form-group" style="display:flex; flex-direction:column; gap:6px;">
                         <label style="font-size:12px; font-weight:600; color: var(--text-muted);">💡 BQCA 智能体绑定 ID (GCP Agent ID)</label>
-                        <div style="font-size:11px; color:#f59e0b; margin-bottom:4px; padding:4px 8px; background:rgba(245,158,11,0.1); border-radius:4px; border:1px solid rgba(245,158,11,0.3);">
-                            ⚠️ 仅支持 global 区域的代理，其他区域暂不支持自动绑定
-                        </div>
-                        <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: ecommerce-analyst-cn (仅 global 区域)">
+                        <input type="text" id="gcp-input-agent-id" style="background:#0f1124; border:1px solid var(--border-color); color:#fff; padding:10px; border-radius:8px; font-size:12px;" placeholder="例如: ecommerce-analyst-cn">
+                        <span style="font-size:10px; color:#f59e0b; display: flex; align-items: center; gap: 4px; margin-top: 2px; opacity: 0.85;">
+                            <i class="fa-solid fa-triangle-exclamation"></i> 仅支持 global 区域的代理，其他区域暂不支持自动绑定
+                        </span>
                     </div>
                 </div>
 

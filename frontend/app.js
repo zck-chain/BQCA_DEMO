@@ -1342,17 +1342,28 @@ async function initializeDefaultWorkspace() {
             selectWorkspace(first.workspace_id, first.workspace_name);
             showToast("智能数仓发现", `已从 Google BigQuery 自动拉取并对齐 ${result.data.length} 个已有空间！`, "info", 3500);
         } else {
-            // 回退到静态默认演示空间
-            const defaultSpace = { workspace_id: "saas_audit_demo", workspace_name: "2026法务与财务智能核对空间" };
-            addWorkspaceItemToSidebar(defaultSpace.workspace_id, defaultSpace.workspace_name, true);
-            selectWorkspace(defaultSpace.workspace_id, defaultSpace.workspace_name);
+            // 🚫 移除静态默认演示空间降级，显示优雅的空状态提示
+            workspaceList.innerHTML = `<li style="padding:16px 12px; font-size:12px; color:var(--text-muted); text-align:center;"><i class="fa-solid fa-folder-open" style="margin-right:4px;"></i> 暂无空间，请在上方新建</li>`;
+            renderEmptyWorkspaceState();
         }
     } catch (e) {
-        console.error("无法加载云端数仓空间列表，降级加载演示空间", e);
-        const defaultSpace = { workspace_id: "saas_audit_demo", workspace_name: "2026法务与财务智能核对空间" };
-        addWorkspaceItemToSidebar(defaultSpace.workspace_id, defaultSpace.workspace_name, true);
-        selectWorkspace(defaultSpace.workspace_id, defaultSpace.workspace_name);
+        console.error("无法加载云端数仓空间列表，显示优雅的空状态提示", e);
+        workspaceList.innerHTML = `<li style="padding:16px 12px; font-size:12px; color:var(--text-muted); text-align:center;"><i class="fa-solid fa-folder-open" style="margin-right:4px;"></i> 暂无空间，请在上方新建</li>`;
+        renderEmptyWorkspaceState();
     }
+}
+
+function renderEmptyWorkspaceState() {
+    currentWorkspace = null;
+    analysisResults = [];
+    netdiskFileList.innerHTML = `<li style="padding:16px 12px; font-size:12px; color:var(--text-muted); text-align:center;"><i class="fa-solid fa-cloud-arrow-up" style="margin-right:4px;"></i> 暂无待分析文件，请先新建空间</li>`;
+    analysisTableBody.innerHTML = `<tr><td colspan="6" class="table-empty-hint">请先在左侧新建一个工作空间并上传文件</td></tr>`;
+    historyTableBody.innerHTML = `<tr><td colspan="6" class="table-empty-hint">暂无已审核归档数据</td></tr>`;
+    btnTriggerAnalyze.disabled = true;
+    
+    currentSpaceTitle.textContent = "请新建空间";
+    currentSpaceDesc.textContent = "未关联到任何有效的云端数据集，请在上方新建一个专科空间";
+    dropzone.classList.add("disabled");
 }
 
 function addWorkspaceItemToSidebar(id, name, isActive = false) {

@@ -240,7 +240,7 @@ class BigQueryService:
                                 ) 
                                 PARTITION BY DATE(created_at)
                                 OPTIONS(
-                                  description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。"
+                                  description="【{w_space} 专属黄金知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了工作空间 {w_space} 的相关业务合同、物理单据、采购和财务数据。"
                                 );
                             """
                             self.client.query(init_table_ddl).result()
@@ -1087,7 +1087,7 @@ FROM
             ) 
             PARTITION BY DATE(created_at)
             OPTIONS(
-              description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。当用户询问关于合同、发票、简历、采购、财务等业务数据统计、过滤、求和的问题时，AI 代理必须且只能查询本表！"
+              description="【{workspace_id} 专属黄金知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了工作空间 {workspace_id} 的相关业务合同、物理单据、采购和财务数据。"
             );
         """
         self.client.query(init_table_ddl).result()
@@ -1261,7 +1261,7 @@ FROM
                     alter_table_ddl = f"""
                         ALTER TABLE `{results_table}`
                         SET OPTIONS(
-                          description="【BQCA 最高优先知识库】这是经过人工双屏审计、订正核对后的最终完美黄金实体表。包含了所有合同的采购主体(buyer/seller)、最晚交货期(delivery_deadline)、质保年限(warranty_years)、发票金额、简历信息。当用户询问关于合同、发票、简历、采购、财务等业务数据统计、过滤、求和的问题时，AI 代理必须且只能查询本表！[物理重载震荡信号: {timestamp_str}]"
+                          description="【{workspace_id} 专属黄金知识库】经过人工双屏审计、订正核对后的完美黄金实体表。包含工作空间 {workspace_id} 相关的核心业务合同与单据数据。[物理重载震荡信号: {timestamp_str}]"
                         );
                     """
                     self.client.query(alter_table_ddl).result()
@@ -1270,7 +1270,7 @@ FROM
                     alter_dataset_ddl = f"""
                         ALTER SCHEMA `{config.get_project_id()}.{dataset_id}`
                         SET OPTIONS(
-                          description="【电商分析师核心数据大本盘】GCP BQCA 官方特约演示大数仓底盘。[物理重载震荡信号: {timestamp_str}]"
+                          description="【{workspace_id} 专属数据大本盘】工作空间 {workspace_id} 对应的 BQCA 数据集。[物理重载震荡信号: {timestamp_str}]"
                         );
                     """
                     self.client.query(alter_dataset_ddl).result()
